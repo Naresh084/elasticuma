@@ -1,0 +1,31 @@
+.DS_Store
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Large or machine-local research state.
+.models/
+.runtime/
+.locks/
+artifacts/raw/**
+artifacts/admitted/**
+artifacts/figures/**
+artifacts/releases/**
+!artifacts/raw/.gitkeep
+!artifacts/admitted/.gitkeep
+!artifacts/figures/.gitkeep
+!artifacts/releases/elasticuma-paper-v1.tar.gz
+paper/build/
+native/.build/
+
+# Secrets and local overrides.
+.env
+.env.*
+!.env.example
+configs/local*.toml

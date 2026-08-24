@@ -1,0 +1,15 @@
+ElasticUMA
+Copyright 2026 Naresh Prajapati
+
+This distribution includes a source patch for slipstream, originally developed
+by Dwijen Patel and contributors and distributed under the Apache License 2.0.
+The patch is an ElasticUMA modification; the bootstrap retrieves the unmodified
+upstream source at its pinned commit before applying it. Upstream notices and
+copyrights remain in the reconstructed source tree.
+
+FreeToken informed the edge-MoE problem framing and public onboarding, but no
+FreeToken source code is included or required.
+
+Research baselines, papers, Python/Swift dependencies, and model checkpoints
+retain their own copyrights and licenses. No model weights are distributed.
+See docs/PRIOR_ART.md and docs/THIRD_PARTY.md.

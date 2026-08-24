@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ElasticUMA reload-correct purgeable expert cache</title>
+  <style>
+    html, body { margin: 0; background: #fafbfc; }
+    body { display: grid; place-items: center; min-height: 100vh; }
+    svg { width: min(100vw, 1600px); height: auto; font-family: Arial, sans-serif; }
+    .title { font-family: "Times New Roman", serif; font-size: 35px; fill: #111827; }
+    .subtitle { font-size: 17px; fill: #475569; }
+    .zone { fill: rgba(15,23,42,.018); stroke: rgba(15,23,42,.16); stroke-width: 1.2; }
+    .zone-label { font: 600 12px Menlo, monospace; letter-spacing: .16em; fill: #64748b; }
+    .node { fill: #fff; stroke: #111827; stroke-width: 1.7; }
+    .store { fill: #f1f5f9; stroke: #475569; stroke-width: 1.5; }
+    .focal { fill: rgba(31,78,121,.08); stroke: #1f4e79; stroke-width: 2.2; }
+    .optional { fill: rgba(15,23,42,.025); stroke: #94a3b8; stroke-width: 1.4; stroke-dasharray: 7 5; }
+    .node-title { font-size: 19px; font-weight: 700; fill: #111827; }
+    .node-sub { font-size: 14px; fill: #475569; }
+    .mono { font: 13px Menlo, monospace; fill: #475569; }
+    .edge { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }
+    .edge-accent { fill: none; stroke: #1f4e79; stroke-width: 2.4; marker-end: url(#arrow-accent); }
+    .edge-dashed { fill: none; stroke: #64748b; stroke-width: 1.8; stroke-dasharray: 8 6; marker-end: url(#arrow); }
+    .edge-label { font: 12px Menlo, monospace; fill: #475569; }
+    .label-mask { fill: #fafbfc; }
+    .callout { font: italic 17px "Times New Roman", serif; fill: #1f4e79; }
+  </style>
+</head>
+<body>
+<svg viewBox="0 0 1600 820" role="img" aria-labelledby="title desc">
+  <title id="title">ElasticUMA reload-correct purgeable expert cache</title>
+  <desc id="desc">Routed experts are stored in Metal-owned slots. Hot slots stay nonvolatile, cold slots become volatile, macOS may reclaim them, and every reuse is relocked. Empty slots are invalidated and reloaded exactly from the immutable packed model.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <polygon points="0 0,10 4,0 8" fill="#475569"/>
+    </marker>
+    <marker id="arrow-accent" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <polygon points="0 0,10 4,0 8" fill="#1f4e79"/>
+    </marker>
+  </defs>
+
+  <rect width="1600" height="820" fill="#fafbfc"/>
+  <text x="80" y="62" class="title">ElasticUMA: OS-managed expert residency with exact recovery</text>
+  <text x="80" y="91" class="subtitle">Cold pages become reclaimable; cache validity is re-established before every GPU reuse.</text>
+
+  <rect x="70" y="138" width="340" height="548" rx="10" class="zone"/>
+  <rect x="90" y="146" width="154" height="22" rx="3" fill="#fafbfc"/>
+  <text x="98" y="162" class="zone-label">SOURCE OF TRUTH</text>
+
+  <rect x="450" y="138" width="720" height="548" rx="10" class="zone"/>
+  <rect x="470" y="146" width="143" height="22" rx="3" fill="#fafbfc"/>
+  <text x="478" y="162" class="zone-label">SWIFT + METAL</text>
+
+  <rect x="1210" y="138" width="320" height="548" rx="10" class="zone"/>
+  <rect x="1230" y="146" width="147" height="22" rx="3" fill="#fafbfc"/>
+  <text x="1238" y="162" class="zone-label">MACOS UMA</text>
+
+  <!-- Connections are drawn before nodes. -->
+  <path d="M 410 295 H 500" class="edge"/>
+  <path d="M 790 278 V 334" class="edge-accent"/>
+  <path d="M 1044 433 H 1142 Q 1150 433 1150 441 V 522 Q 1150 530 1158 530 H 1248" class="edge-dashed"/>
+  <path d="M 1370 384 V 468" class="edge"/>
+  <path d="M 1248 534 H 1098 Q 1090 534 1090 542 V 604 H 990" class="edge-dashed"/>
+  <path d="M 760 604 H 676 Q 668 604 668 596 V 472" class="edge-accent"/>
+  <path d="M 500 604 H 356 Q 348 604 348 596 V 390" class="edge"/>
+
+  <rect x="415" y="270" width="100" height="24" rx="3" class="label-mask"/>
+  <text x="465" y="286" text-anchor="middle" class="edge-label">pread bytes</text>
+  <rect x="1050" y="405" width="148" height="24" rx="3" class="label-mask"/>
+  <text x="1124" y="421" text-anchor="middle" class="edge-label">set .volatile</text>
+  <rect x="1097" y="576" width="135" height="24" rx="3" class="label-mask"/>
+  <text x="1164" y="592" text-anchor="middle" class="edge-label">may return .empty</text>
+  <rect x="362" y="575" width="116" height="24" rx="3" class="label-mask"/>
+  <text x="420" y="591" text-anchor="middle" class="edge-label">reload miss</text>
+
+  <rect x="110" y="226" width="260" height="164" rx="8" class="store"/>
+  <text x="240" y="270" text-anchor="middle" class="node-title">Packed model on SSD</text>
+  <text x="240" y="301" text-anchor="middle" class="node-sub">Immutable layer files</text>
+  <text x="240" y="328" text-anchor="middle" class="mono">.gturbo / positional reads</text>
+  <text x="240" y="354" text-anchor="middle" class="node-sub">One canonical model copy</text>
+
+  <rect x="500" y="208" width="580" height="70" rx="8" class="node"/>
+  <text x="790" y="238" text-anchor="middle" class="node-title">Router + cache planner</text>
+  <text x="790" y="261" text-anchor="middle" class="node-sub">Top-k experts · LFU count · recency · slot identity</text>
+
+  <rect x="500" y="334" width="580" height="176" rx="8" class="focal"/>
+  <text x="790" y="368" text-anchor="middle" class="node-title">Metal-owned slot pool (96 logical slots / layer)</text>
+  <rect x="536" y="394" width="238" height="78" rx="6" class="node"/>
+  <text x="655" y="423" text-anchor="middle" class="node-title">Hot set</text>
+  <text x="655" y="449" text-anchor="middle" class="mono">16 · nonvolatile</text>
+  <rect x="806" y="394" width="238" height="78" rx="6" class="optional"/>
+  <text x="925" y="423" text-anchor="middle" class="node-title">Cold set</text>
+  <text x="925" y="449" text-anchor="middle" class="mono">up to 80 · volatile</text>
+
+  <rect x="500" y="560" width="490" height="88" rx="8" class="node"/>
+  <text x="745" y="593" text-anchor="middle" class="node-title">Relock before treating any mapping as a hit</text>
+  <text x="745" y="620" text-anchor="middle" class="mono">setPurgeableState(.nonVolatile)</text>
+
+  <rect x="1248" y="234" width="244" height="150" rx="8" class="store"/>
+  <text x="1370" y="274" text-anchor="middle" class="node-title">Unified-memory pressure</text>
+  <text x="1370" y="304" text-anchor="middle" class="node-sub">GPU · apps · page cache</text>
+  <text x="1370" y="331" text-anchor="middle" class="node-sub">compressor · swap</text>
+  <text x="1370" y="357" text-anchor="middle" class="mono">system-wide physical pool</text>
+
+  <rect x="1248" y="468" width="244" height="124" rx="8" class="node"/>
+  <text x="1370" y="506" text-anchor="middle" class="node-title">Reclaim cold pages</text>
+  <text x="1370" y="535" text-anchor="middle" class="node-sub">No logical approximation</text>
+  <text x="1370" y="562" text-anchor="middle" class="mono">retained | empty</text>
+
+  <text x="790" y="742" text-anchor="middle" class="callout">Safe points turn physical residency into an OS decision; relock keeps correctness a runtime decision.</text>
+</svg>
+</body>
+</html>

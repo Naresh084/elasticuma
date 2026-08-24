@@ -1,0 +1,50 @@
+name: Bug report
+description: Report a reproducible installation, runtime, model, or API defect.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues first. Never include secrets, serial numbers, UUIDs, private prompts, or model weights.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: State the expected and observed behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Privacy-safe environment
+      description: Include chip, RAM, macOS, Swift, ElasticUMA commit, and `elasticuma doctor` output.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: model
+    attributes:
+      label: Model identity
+      description: Exact profile or checkpoint repo, immutable revision, quantization, and packed manifest id.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction command and complete log
+      description: Use a minimal public prompt and say whether another model process was running.
+      render: shell
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: I removed secrets and machine identifiers.
+          required: true
+        - label: I did not attach model weights.
+          required: true

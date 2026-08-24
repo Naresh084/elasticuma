@@ -1,0 +1,1 @@
+Explain how to implement a deterministic, crash-safe work queue with bounded memory. State the invariants first, then give concise pseudocode for append, acknowledge, recovery, and compaction.

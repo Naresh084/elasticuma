@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "models": [
+    {
+      "id": "qwen36",
+      "aliases": ["qwen3.6-35b-a3b", "qwen3.6"],
+      "display_name": "Qwen3.6-35B-A3B Q4",
+      "architecture": "qwen3.6-moe",
+      "repo_id": "mlx-community/Qwen3.6-35B-A3B-4bit",
+      "revision": "38740b847e4cb78f352aba30aa41c76e08e6eb46",
+      "source_index_sha256": "0b28df60e33753a14e816d3b31577ae2c93884c58430a4a6de6ae9ea483842ea",
+      "packed_model_id": "qwen3.6-35b-a3b-4bit",
+      "repack_selector": "qwen36",
+      "path_prefix": "qwen36",
+      "layers": 40,
+      "total_experts": 256,
+      "active_experts": 8,
+      "default_cache_slots": 96,
+      "default_hot_slots": 16,
+      "minimum_ram_gib": 32,
+      "verification": "admitted",
+      "evidence": "V6 pressure and V7 no-pressure on M1 Max"
+    },
+    {
+      "id": "gemma4",
+      "aliases": ["gemma-4-26b-a4b", "gemma4-26b-a4b"],
+      "display_name": "Gemma 4 26B-A4B Q4",
+      "architecture": "gemma4-moe",
+      "repo_id": "mlx-community/gemma-4-26b-a4b-it-4bit",
+      "revision": "0d77464eeb233a2da68ebf9d7dc4edaac7db956d",
+      "source_index_sha256": "bf198c9f5ea6462addca1966e5dd669c407537a876e82cf06db9084c5c850b13",
+      "packed_model_id": "mlx-community/gemma-4-26b-a4b-it-4bit",
+      "repack_selector": "gemma4",
+      "path_prefix": "gemma4",
+      "layers": 30,
+      "total_experts": 128,
+      "active_experts": 8,
+      "default_cache_slots": 96,
+      "default_hot_slots": 16,
+      "minimum_ram_gib": 32,
+      "verification": "admitted",
+      "evidence": "V8 no-pressure on M1 Max"
+    }
+  ]
+}

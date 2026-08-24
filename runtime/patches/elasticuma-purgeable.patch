@@ -1,0 +1,1010 @@
+diff --git a/README.md b/README.md
+index b86bc5b..0cd3212 100644
+--- a/README.md
++++ b/README.md
+@@ -20,6 +20,11 @@ hand-written Metal tuned against what this chip delivers rather than what
+ its spec sheet claims: decode attention and the output head each run at
+ better than 90 percent of its real memory bandwidth.
+ 
++> Experimental Apple-UMA work: this branch adds a reload-correct,
++> OS-managed routed-expert cache. See
++> [`docs/ELASTICUMA_PURGEABLE_CACHE.md`](docs/ELASTICUMA_PURGEABLE_CACHE.md)
++> for the mechanism, controls, evidence, and current claim limits.
++
+ ## Running a good coding model on a Mac, like Qwen3.6
+ 
+ **The field is three engines and a long tail.** llama.cpp runs GGUF, and
+diff --git a/Sources/TurboFieldfare/Infrastructure/Streaming/PreadExpertStreamer.swift b/Sources/TurboFieldfare/Infrastructure/Streaming/PreadExpertStreamer.swift
+index 6581d5b..41f467b 100644
+--- a/Sources/TurboFieldfare/Infrastructure/Streaming/PreadExpertStreamer.swift
++++ b/Sources/TurboFieldfare/Infrastructure/Streaming/PreadExpertStreamer.swift
+@@ -53,9 +53,76 @@ public enum ExpertCachePolicy: String, Sendable {
+     case lfu
+ }
+ 
++public enum ExpertCacheResidencyMode: String, Sendable {
++    case fixed
++    case osManaged = "os-managed"
++}
++
++/// Cumulative telemetry for reload-correct purgeable expert slots.
++public struct ExpertCacheResidencyStats: Sendable, Equatable {
++    public let volatileTransitions: UInt64
++    public let revalidations: UInt64
++    public let retainedRevalidations: UInt64
++    public let emptyRecoveries: UInt64
++    public let explicitDiscards: UInt64
++    public let invalidatedSlots: UInt64
++    public let reclaimedBytes: UInt64
++
++    public init(volatileTransitions: UInt64 = 0,
++                revalidations: UInt64 = 0,
++                retainedRevalidations: UInt64 = 0,
++                emptyRecoveries: UInt64 = 0,
++                explicitDiscards: UInt64 = 0,
++                invalidatedSlots: UInt64 = 0,
++                reclaimedBytes: UInt64 = 0) {
++        self.volatileTransitions = volatileTransitions
++        self.revalidations = revalidations
++        self.retainedRevalidations = retainedRevalidations
++        self.emptyRecoveries = emptyRecoveries
++        self.explicitDiscards = explicitDiscards
++        self.invalidatedSlots = invalidatedSlots
++        self.reclaimedBytes = reclaimedBytes
++    }
++
++    public static func + (lhs: Self, rhs: Self) -> Self {
++        Self(
++            volatileTransitions: lhs.volatileTransitions &+ rhs.volatileTransitions,
++            revalidations: lhs.revalidations &+ rhs.revalidations,
++            retainedRevalidations: lhs.retainedRevalidations &+ rhs.retainedRevalidations,
++            emptyRecoveries: lhs.emptyRecoveries &+ rhs.emptyRecoveries,
++            explicitDiscards: lhs.explicitDiscards &+ rhs.explicitDiscards,
++            invalidatedSlots: lhs.invalidatedSlots &+ rhs.invalidatedSlots,
++            reclaimedBytes: lhs.reclaimedBytes &+ rhs.reclaimedBytes)
++    }
++}
++
++public struct ExpertCacheResidencyAction: Sendable, Equatable {
++    public let occupiedSlots: Int
++    public let keptSlots: Int
++    public let transitionedSlots: Int
++    public let affectedBytes: UInt64
++
++    public init(occupiedSlots: Int = 0,
++                keptSlots: Int = 0,
++                transitionedSlots: Int = 0,
++                affectedBytes: UInt64 = 0) {
++        self.occupiedSlots = occupiedSlots
++        self.keptSlots = keptSlots
++        self.transitionedSlots = transitionedSlots
++        self.affectedBytes = affectedBytes
++    }
++
++    public static func + (lhs: Self, rhs: Self) -> Self {
++        Self(
++            occupiedSlots: lhs.occupiedSlots + rhs.occupiedSlots,
++            keptSlots: lhs.keptSlots + rhs.keptSlots,
++            transitionedSlots: lhs.transitionedSlots + rhs.transitionedSlots,
++            affectedBytes: lhs.affectedBytes &+ rhs.affectedBytes)
++    }
++}
++
+ /// `pread`-based routed-expert streamer with a fixed per-layer slot cache.
+ public final class PreadExpertStreamer: @unchecked Sendable {
+-    public static let scratchAlignment = 2 * 1024 * 1024
+     public static var cachePolicyDefault: ExpertCachePolicy { .lfu }
+ 
+     public let layout: StreamLayout
+@@ -63,6 +130,7 @@ public final class PreadExpertStreamer: @unchecked Sendable {
+     public let cachePolicy: ExpertCachePolicy
+ 
+     private let fd: Int32
++    private let slotAllocationSize: Int
+     private let slotPointers: [UnsafeMutableRawPointer]
+     private let slotBuffers: [MTLBuffer]
+ 
+@@ -73,6 +141,19 @@ public final class PreadExpertStreamer: @unchecked Sendable {
+     private var slotLastUse: [Int]
+     private var expertUseCount: [Int]
+     private var useClock = 0
++    private enum SlotResidency: Equatable {
++        case nonVolatile
++        case volatile
++        case empty
++    }
++    private var slotResidency: [SlotResidency]
++    private var residencyVolatileTransitions: UInt64 = 0
++    private var residencyRevalidations: UInt64 = 0
++    private var residencyRetainedRevalidations: UInt64 = 0
++    private var residencyEmptyRecoveries: UInt64 = 0
++    private var residencyExplicitDiscards: UInt64 = 0
++    private var residencyInvalidatedSlots: UInt64 = 0
++    private var residencyReclaimedBytes: UInt64 = 0
+     private let cacheLock = NSLock()
+ 
+     public init(layout: StreamLayout,
+@@ -108,39 +189,32 @@ public final class PreadExpertStreamer: @unchecked Sendable {
+         pointers.reserveCapacity(slotCount)
+         buffers.reserveCapacity(slotCount)
+ 
+-        func unwind() {
+-            for index in buffers.count..<pointers.count {
+-                free(pointers[index])
+-            }
+-            close(openedFD)
+-        }
++        func unwind() { close(openedFD) }
+ 
+         for _ in 0..<slotCount {
+-            var raw: UnsafeMutableRawPointer?
+-            let result = posix_memalign(&raw, Self.scratchAlignment, allocationSize)
+-            guard result == 0, let pointer = raw else {
+-                unwind()
+-                throw StreamerError.allocFailed(errno: result)
+-            }
+-            pointers.append(pointer)
+-            nonisolated(unsafe) let capturedPointer = pointer
+             guard let buffer = device.makeBuffer(
+-                bytesNoCopy: pointer,
+                 length: allocationSize,
+-                options: .storageModeShared,
+-                deallocator: { _, _ in free(capturedPointer) })
+-            else {
++                options: .storageModeShared
++            ) else {
+                 unwind()
+                 throw StreamerError.bufferWrapFailed
+             }
++            let pointer = buffer.contents()
++            guard Int(bitPattern: pointer) % pageSize == 0 else {
++                unwind()
++                throw StreamerError.allocFailed(errno: EINVAL)
++            }
++            pointers.append(pointer)
+             buffers.append(buffer)
+         }
+ 
++        self.slotAllocationSize = allocationSize
+         self.slotPointers = pointers
+         self.slotBuffers = buffers
+         self.slotExpert = [Int](repeating: -1, count: slotCount)
+         self.slotLastUse = [Int](repeating: 0, count: slotCount)
+         self.expertUseCount = [Int](repeating: 0, count: max(1, layout.expertsPerLayer))
++        self.slotResidency = [SlotResidency](repeating: .nonVolatile, count: slotCount)
+     }
+ 
+     deinit {
+@@ -165,6 +239,7 @@ public final class PreadExpertStreamer: @unchecked Sendable {
+         guard regionOffset + layout.expertStride <= layout.streamSize else {
+             throw StreamerError.offsetOutOfRange(regionOffset)
+         }
++        ensureSlotNonVolatile(slot)
+         try readFull(
+             into: slotPointers[slot],
+             fileOffset: layout.streamOffset + regionOffset,
+@@ -206,6 +281,7 @@ public final class PreadExpertStreamer: @unchecked Sendable {
+         for index in experts.indices {
+             for slot in 0..<slotCount
+                 where !reserved[slot] && slotExpert[slot] == experts[index] {
++                guard ensureSlotNonVolatileLocked(slot) else { continue }
+                 assignedSlots[index] = slot
+                 reserved[slot] = true
+                 break
+@@ -285,6 +361,76 @@ public final class PreadExpertStreamer: @unchecked Sendable {
+         }
+     }
+ 
++    /// Keep the hottest `keepingHotSlots` resident and offer the remaining
++    /// cached experts to macOS as discardable memory.  The caller must invoke
++    /// this only at a GPU-safe boundary.  A later cache hit relocks its slot;
++    /// Metal's `.empty` return is treated as a miss and the exact expert bytes
++    /// are re-read before the buffer can be bound again.
++    public func makeColdSlotsVolatile(keepingHotSlots: Int)
++        -> ExpertCacheResidencyAction {
++        cacheLock.lock()
++        defer { cacheLock.unlock() }
++        let occupied = (0..<slotCount).filter { slotExpert[$0] >= 0 }
++        let keepCount = min(max(0, keepingHotSlots), occupied.count)
++        let hot = Set(occupied.sorted(by: isHotterSlot).prefix(keepCount))
++        var transitioned = 0
++
++        for slot in occupied {
++            if hot.contains(slot) {
++                _ = ensureSlotNonVolatileLocked(slot)
++            } else if slotResidency[slot] == .nonVolatile {
++                _ = slotBuffers[slot].setPurgeableState(.volatile)
++                slotResidency[slot] = .volatile
++                transitioned += 1
++                residencyVolatileTransitions &+= 1
++            }
++        }
++        return ExpertCacheResidencyAction(
++            occupiedSlots: occupied.count,
++            keptSlots: hot.count,
++            transitionedSlots: transitioned,
++            affectedBytes: UInt64(transitioned) * UInt64(slotAllocationSize))
++    }
++
++    /// Deterministic critical-pressure/test path: discard every cold slot now.
++    public func discardColdSlots(keepingHotSlots: Int)
++        -> ExpertCacheResidencyAction {
++        cacheLock.lock()
++        defer { cacheLock.unlock() }
++        let occupied = (0..<slotCount).filter { slotExpert[$0] >= 0 }
++        let keepCount = min(max(0, keepingHotSlots), occupied.count)
++        let hot = Set(occupied.sorted(by: isHotterSlot).prefix(keepCount))
++        var discarded = 0
++
++        for slot in occupied where !hot.contains(slot) {
++            _ = slotBuffers[slot].setPurgeableState(.empty)
++            slotResidency[slot] = .empty
++            slotExpert[slot] = -1
++            slotLastUse[slot] = 0
++            discarded += 1
++            residencyExplicitDiscards &+= 1
++            residencyInvalidatedSlots &+= 1
++        }
++        return ExpertCacheResidencyAction(
++            occupiedSlots: occupied.count,
++            keptSlots: hot.count,
++            transitionedSlots: discarded,
++            affectedBytes: UInt64(discarded) * UInt64(slotAllocationSize))
++    }
++
++    public func expertCacheResidencyStats() -> ExpertCacheResidencyStats {
++        cacheLock.lock()
++        defer { cacheLock.unlock() }
++        return ExpertCacheResidencyStats(
++            volatileTransitions: residencyVolatileTransitions,
++            revalidations: residencyRevalidations,
++            retainedRevalidations: residencyRetainedRevalidations,
++            emptyRecoveries: residencyEmptyRecoveries,
++            explicitDiscards: residencyExplicitDiscards,
++            invalidatedSlots: residencyInvalidatedSlots,
++            reclaimedBytes: residencyReclaimedBytes)
++    }
++
+     public func adviseExpertCachePlanMisses(_ plan: ExpertCachePlan) -> ExpertIOAdviceResult {
+         let experts = plan.misses.map { plan.experts[$0] }
+         return adviseRanges(expertAdviceRanges(experts: experts), requested: experts.count)
+@@ -340,6 +486,50 @@ public final class PreadExpertStreamer: @unchecked Sendable {
+         return slotLastUse[lhs] < slotLastUse[rhs]
+     }
+ 
++    private func isHotterSlot(_ lhs: Int, than rhs: Int) -> Bool {
++        let lhsExpert = slotExpert[lhs]
++        let rhsExpert = slotExpert[rhs]
++        let lhsCount = lhsExpert >= 0 && lhsExpert < expertUseCount.count
++            ? expertUseCount[lhsExpert] : 0
++        let rhsCount = rhsExpert >= 0 && rhsExpert < expertUseCount.count
++            ? expertUseCount[rhsExpert] : 0
++        if lhsCount != rhsCount { return lhsCount > rhsCount }
++        if slotLastUse[lhs] != slotLastUse[rhs] {
++            return slotLastUse[lhs] > slotLastUse[rhs]
++        }
++        return lhs < rhs
++    }
++
++    private func ensureSlotNonVolatile(_ slot: Int) {
++        cacheLock.lock()
++        _ = ensureSlotNonVolatileLocked(slot)
++        cacheLock.unlock()
++    }
++
++    /// Returns whether the previous contents are still valid. Requires
++    /// `cacheLock`; callers planning a hit must convert `false` into a miss.
++    @discardableResult
++    private func ensureSlotNonVolatileLocked(_ slot: Int) -> Bool {
++        guard slotResidency[slot] != .nonVolatile else { return true }
++        let trackedState = slotResidency[slot]
++        let previous = slotBuffers[slot].setPurgeableState(.nonVolatile)
++        slotResidency[slot] = .nonVolatile
++        residencyRevalidations &+= 1
++        let wasEmpty = trackedState == .empty || previous == .empty
++        if wasEmpty {
++            residencyEmptyRecoveries &+= 1
++            residencyReclaimedBytes &+= UInt64(slotAllocationSize)
++            if slotExpert[slot] >= 0 {
++                slotExpert[slot] = -1
++                slotLastUse[slot] = 0
++                residencyInvalidatedSlots &+= 1
++            }
++            return false
++        }
++        residencyRetainedRevalidations &+= 1
++        return true
++    }
++
+     private func expertAdviceRanges(experts: [Int]) -> [(offset: UInt64, count: UInt64)] {
+         experts.compactMap { expert in
+             let regionOffset = layout.expertOffset(layer: 0, expert: expert)
+diff --git a/Sources/TurboFieldfare/Runtime/Inference/ModelExpertIO.swift b/Sources/TurboFieldfare/Runtime/Inference/ModelExpertIO.swift
+index 9ae7b88..beead40 100644
+--- a/Sources/TurboFieldfare/Runtime/Inference/ModelExpertIO.swift
++++ b/Sources/TurboFieldfare/Runtime/Inference/ModelExpertIO.swift
+@@ -17,6 +17,51 @@ public struct RoutedExpertFetchPlan: Sendable {
+ }
+ 
+ extension Model {
++    public func makeRoutedExpertCacheColdSlotsVolatile(
++        layer: Int,
++        keepingHotSlots: Int
++    ) -> ExpertCacheResidencyAction {
++        let streamer = streamersQueue.sync { () -> PreadExpertStreamer? in
++            guard layer >= 0 && layer < streamersBox.streamers.count else { return nil }
++            return streamersBox.streamers[layer]
++        }
++        guard let streamer else {
++            return ExpertCacheResidencyAction()
++        }
++        return streamer.makeColdSlotsVolatile(keepingHotSlots: keepingHotSlots)
++    }
++
++    /// At a GPU-safe boundary, keep only the hottest slots in every opened
++    /// layer nonvolatile and offer the cold remainder to macOS.
++    public func makeRoutedExpertCacheColdSlotsVolatile(
++        keepingHotSlotsPerLayer: Int
++    ) -> ExpertCacheResidencyAction {
++        let streamers = streamersQueue.sync { streamersBox.streamers.compactMap { $0 } }
++        return streamers.reduce(ExpertCacheResidencyAction()) { result, streamer in
++            result + streamer.makeColdSlotsVolatile(
++                keepingHotSlots: keepingHotSlotsPerLayer)
++        }
++    }
++
++    /// Deterministic critical-pressure/test path.  The same reload validation
++    /// used for OS reclamation makes a later access exact.
++    public func discardRoutedExpertCacheColdSlots(
++        keepingHotSlotsPerLayer: Int
++    ) -> ExpertCacheResidencyAction {
++        let streamers = streamersQueue.sync { streamersBox.streamers.compactMap { $0 } }
++        return streamers.reduce(ExpertCacheResidencyAction()) { result, streamer in
++            result + streamer.discardColdSlots(
++                keepingHotSlots: keepingHotSlotsPerLayer)
++        }
++    }
++
++    public func routedExpertCacheResidencyStats() -> ExpertCacheResidencyStats {
++        let streamers = streamersQueue.sync { streamersBox.streamers.compactMap { $0 } }
++        return streamers.reduce(ExpertCacheResidencyStats()) {
++            $0 + $1.expertCacheResidencyStats()
++        }
++    }
++
+     public func routedExpertOffsets(layer: Int) -> MoEExpertOffsets {
+         let expert = packedExpertsLayout.expert(layer: layer, expert: 0)
+         func offset(_ role: String) -> UInt32 {
+diff --git a/Sources/TurboFieldfare/Runtime/Inference/RealForwardRunner.swift b/Sources/TurboFieldfare/Runtime/Inference/RealForwardRunner.swift
+index 8068bdf..bdb1831 100644
+--- a/Sources/TurboFieldfare/Runtime/Inference/RealForwardRunner.swift
++++ b/Sources/TurboFieldfare/Runtime/Inference/RealForwardRunner.swift
+@@ -631,6 +631,11 @@ public final class RealForwardRunner: ChunkedPrefillRunner, ContextWindowReporti
+     /// Forced off under TURBO_FIELDFARE_CB1_SPLIT (that diagnostic's
+     /// attribution depends on the unmerged structure).
+     public var mergeCommandBuffers = true
++    /// When set, each completed prefill layer immediately offers all but its
++    /// hottest routed-expert slots to macOS. Decode also reapplies the policy
++    /// at its existing token-safe boundary in the caller. Nil preserves the
++    /// pinned fixed-residency behavior exactly.
++    public var expertResidencyHotSlots: Int?
+     /// Wall time spent blocked in the per-layer router-readback wait.
+     /// Measured 2026-08-01: ~11.8 s of a 19.1 s / 512-token decode, of
+     /// which ~4.6 s is completion-machinery overhead (~230 us x 40
+@@ -2197,6 +2202,11 @@ public final class RealForwardRunner: ChunkedPrefillRunner, ContextWindowReporti
+                     if let error = tailCB.error {
+                         throw error
+                     }
++                    if let hotSlots = expertResidencyHotSlots {
++                        _ = model.makeRoutedExpertCacheColdSlotsVolatile(
++                            layer: L,
++                            keepingHotSlots: hotSlots)
++                    }
+                     if L + 1 < cfg.numLayers {
+                         guard let nextCB = ctx.queue.makeCommandBuffer() else {
+                             throw ModelError.residentBufferWrapFailed
+@@ -2945,6 +2955,11 @@ public final class RealForwardRunner: ChunkedPrefillRunner, ContextWindowReporti
+             carryCB = nil
+         }
+ 
++        if let hotSlots = expertResidencyHotSlots {
++            _ = model.makeRoutedExpertCacheColdSlotsVolatile(
++                keepingHotSlotsPerLayer: hotSlots)
++        }
++
+         kv?.advance()
+     }
+ 
+diff --git a/Sources/TurboFieldfareCLI/Args.swift b/Sources/TurboFieldfareCLI/Args.swift
+index 6ad2cf3..a494205 100644
+--- a/Sources/TurboFieldfareCLI/Args.swift
++++ b/Sources/TurboFieldfareCLI/Args.swift
+@@ -23,6 +23,8 @@ public struct Args: Equatable, Sendable {
+     public var stops: [String]
+     public var quiet: Bool
+     public var expertCacheSlots: Int
++    public var expertCacheResidency: ExpertCacheResidencyMode
++    public var expertCacheHotSlots: Int
+     public var rdadvise: String
+     public var prefillChunk: PrefillChunkChoice
+     public var kvSnapshot: String?
+@@ -40,6 +42,8 @@ public struct Args: Equatable, Sendable {
+                 stops: [String] = [],
+                 quiet: Bool = false,
+                 expertCacheSlots: Int = RuntimeDefaults.expertCacheSlots,
++                expertCacheResidency: ExpertCacheResidencyMode = .fixed,
++                expertCacheHotSlots: Int = 16,
+                 rdadvise: String = "off",
+                 prefillChunk: PrefillChunkChoice = .auto,
+                 kvSnapshot: String? = nil) {
+@@ -53,6 +57,8 @@ public struct Args: Equatable, Sendable {
+         self.topP = topP
+         self.repetitionPenalty = repetitionPenalty
+         self.expertCacheSlots = expertCacheSlots
++        self.expertCacheResidency = expertCacheResidency
++        self.expertCacheHotSlots = expertCacheHotSlots
+         self.rdadvise = rdadvise
+         self.seed = seed
+         self.stops = stops
+@@ -112,6 +118,13 @@ extension Args {
+                                 128, 192, 256. More slots raise the hit
+                                 rate and cost RAM; measured warm on M5,
+                                 16 -> 128 slots is 25.3 -> 32.1 tok/s.
++      --expert-cache-residency <fixed|os-managed>
++                                Residency policy (default fixed). os-managed
++                                keeps hot slots resident and lets macOS reclaim
++                                cold Metal slots with exact reload on reuse.
++      --expert-cache-hot-slots <n>
++                                Nonvolatile slots per layer in os-managed mode
++                                (default min(16, expert-cache-slots)).
+       --prefill-chunk <n|auto>  Prefill chunk tokens (default auto). Larger
+                                 chunks cut routed-expert re-reads during
+                                 prompt processing; auto sizes the chunk to
+@@ -139,6 +152,8 @@ extension Args {
+         var stops: [String] = []
+         var quiet = false
+         var expertCacheSlots = RuntimeDefaults.expertCacheSlots
++        var expertCacheResidency: ExpertCacheResidencyMode = .fixed
++        var configuredExpertCacheHotSlots: Int?
+         var rdadvise = "off"
+         var prefillChunk = PrefillChunkChoice.auto
+         var kvSnapshot: String?
+@@ -224,6 +239,18 @@ extension Args {
+                     throw ArgsError.invalidValue(flag: flag, value: value)
+                 }
+                 expertCacheSlots = parsed
++            case "--expert-cache-residency":
++                let value = try takeValue(argv, &index, flag: flag)
++                guard let parsed = ExpertCacheResidencyMode(rawValue: value) else {
++                    throw ArgsError.invalidValue(flag: flag, value: value)
++                }
++                expertCacheResidency = parsed
++            case "--expert-cache-hot-slots":
++                let value = try takeValue(argv, &index, flag: flag)
++                guard let parsed = Int(value), parsed >= 0 else {
++                    throw ArgsError.invalidValue(flag: flag, value: value)
++                }
++                configuredExpertCacheHotSlots = parsed
+             case "--rdadvise":
+                 let value = try takeValue(argv, &index, flag: flag)
+                 guard ["off", "default", "bounded", "adaptive"].contains(value) else {
+@@ -247,6 +274,13 @@ extension Args {
+                 flag: "--top-p",
+                 value: "\(topP) requires --top-k between 1 and 256")
+         }
++        let expertCacheHotSlots = configuredExpertCacheHotSlots
++            ?? min(16, expertCacheSlots)
++        guard expertCacheHotSlots <= expertCacheSlots else {
++            throw ArgsError.invalidValue(
++                flag: "--expert-cache-hot-slots",
++                value: String(expertCacheHotSlots))
++        }
+         return Args(model: model,
+                     prompt: prompt,
+                     messagesFile: messagesFile,
+@@ -260,6 +294,8 @@ extension Args {
+                     stops: stops,
+                     quiet: quiet,
+                     expertCacheSlots: expertCacheSlots,
++                    expertCacheResidency: expertCacheResidency,
++                    expertCacheHotSlots: expertCacheHotSlots,
+                     rdadvise: rdadvise,
+                     prefillChunk: prefillChunk,
+                     kvSnapshot: kvSnapshot)
+diff --git a/Sources/TurboFieldfareCLI/Run.swift b/Sources/TurboFieldfareCLI/Run.swift
+index 2b0131c..11c7314 100644
+--- a/Sources/TurboFieldfareCLI/Run.swift
++++ b/Sources/TurboFieldfareCLI/Run.swift
+@@ -105,6 +105,11 @@ public func run(args: Args,
+         let scratch = try RawCompletionScratch(context: context,
+                                                vocab: model.config.vocabSize,
+                                                logitSoftcap: Float(model.config.finalLogitSoftcap))
++        let osManagedExpertResidency = args.expertCacheResidency == .osManaged
++        let hotSlotsPerLayer = args.expertCacheHotSlots
++        if osManagedExpertResidency {
++            runner.expertResidencyHotSlots = hotSlotsPerLayer
++        }
+         let stats = try await runRawCompletion(
+             producer: runner,
+             tokenizer: tokenizer,
+@@ -124,6 +129,23 @@ public func run(args: Args,
+                 }
+             }
+ 
++        if osManagedExpertResidency {
++            let residency = model.routedExpertCacheResidencyStats()
++            let line = String(
++                format: "\n[expert-residency hot_slots=%d volatile=%llu revalidate=%llu "
++                    + "retained=%llu empty=%llu discard=%llu invalidated_slots=%llu "
++                    + "reclaimed_bytes=%llu]\n",
++                hotSlotsPerLayer,
++                residency.volatileTransitions,
++                residency.revalidations,
++                residency.retainedRevalidations,
++                residency.emptyRecoveries,
++                residency.explicitDiscards,
++                residency.invalidatedSlots,
++                residency.reclaimedBytes)
++            stderr.write(Data(line.utf8))
++        }
++
+         if ProcessInfo.processInfo.environment["TURBO_FIELDFARE_PHASES"] == "1" {
+             let ms = { (n: UInt64) in String(format: "%.1f", Double(n) / 1e6) }
+             let total = stats.decodeSeconds * 1000
+diff --git a/Sources/TurboFieldfareServer/Command/main.swift b/Sources/TurboFieldfareServer/Command/main.swift
+index 4575149..d3daf95 100644
+--- a/Sources/TurboFieldfareServer/Command/main.swift
++++ b/Sources/TurboFieldfareServer/Command/main.swift
+@@ -20,7 +20,9 @@ do {
+         modelDirectory: modelURL,
+         maxContext: arguments.maxContext,
+         promptCacheMode: arguments.promptCacheMode,
+-        expertCacheSlots: arguments.expertCacheSlots)
++        expertCacheSlots: arguments.expertCacheSlots,
++        expertCacheResidency: arguments.expertCacheResidency,
++        expertCacheHotSlots: arguments.expertCacheHotSlots)
+     let modelID = arguments.modelIDOverride ?? backend.defaultModelID
+     let server = TurboFieldfareHTTPServer(
+         modelID: modelID,
+@@ -28,7 +30,7 @@ do {
+         backend: backend,
+         chatDialect: backend.chatDialect)
+     _ = try await server.start(port: arguments.port)
+-    print("TurboFieldfareServer ready at http://127.0.0.1:\(arguments.port) model=\(modelID) context=\(arguments.maxContext) prompt_cache=\(arguments.promptCacheMode.rawValue)")
++    print("TurboFieldfareServer ready at http://127.0.0.1:\(arguments.port) model=\(modelID) context=\(arguments.maxContext) prompt_cache=\(arguments.promptCacheMode.rawValue) expert_residency=\(arguments.expertCacheResidency.rawValue)")
+ 
+     _ = await signals.wait()
+     try await server.shutdown()
+diff --git a/Sources/TurboFieldfareServer/Core/ServerArguments.swift b/Sources/TurboFieldfareServer/Core/ServerArguments.swift
+index b4e0ca3..81db9c7 100644
+--- a/Sources/TurboFieldfareServer/Core/ServerArguments.swift
++++ b/Sources/TurboFieldfareServer/Core/ServerArguments.swift
+@@ -16,6 +16,8 @@ public struct ServerArguments: Equatable, Sendable {
+     /// set by RAM competition between this cache and the OS page cache, not
+     /// by hit rate, so it has to be measured per host rather than assumed.
+     public let expertCacheSlots: Int
++    public let expertCacheResidency: ExpertCacheResidencyMode
++    public let expertCacheHotSlots: Int
+ 
+     public static let usage = """
+     usage: TurboFieldfareServer --model <completed .gturbo directory> [options]
+@@ -34,6 +36,11 @@ public struct ServerArguments: Equatable, Sendable {
+                              More is not always faster: past the point where
+                              this cache starts evicting the OS page cache,
+                              throughput falls even as hit rate rises.
++      --expert-cache-residency <fixed|os-managed>
++                             Residency policy (default fixed).
++      --expert-cache-hot-slots <n>
++                             Nonvolatile slots/layer in os-managed mode
++                             (default min(16, expert-cache-slots)).
+       --help                 Show this help.
+     """
+ 
+@@ -45,6 +52,8 @@ public struct ServerArguments: Equatable, Sendable {
+         var queueLimit = 4
+         var promptCacheMode: ServerPromptCacheMode = .singlePrefix
+         var expertCacheSlots = RuntimeConfiguration().expertCacheSlots
++        var expertCacheResidency: ExpertCacheResidencyMode = .fixed
++        var configuredExpertCacheHotSlots: Int?
+         var index = 0
+         while index < input.count {
+             let flag = input[index]
+@@ -91,18 +100,38 @@ public struct ServerArguments: Equatable, Sendable {
+                         "--expert-cache-slots is not supported")
+                 }
+                 expertCacheSlots = parsed
++            case "--expert-cache-residency":
++                guard let parsed = ExpertCacheResidencyMode(rawValue: value) else {
++                    throw ServerArgumentError.invalid(
++                        "--expert-cache-residency must be fixed or os-managed")
++                }
++                expertCacheResidency = parsed
++            case "--expert-cache-hot-slots":
++                guard let parsed = Int(value), parsed >= 0 else {
++                    throw ServerArgumentError.invalid(
++                        "--expert-cache-hot-slots must be non-negative")
++                }
++                configuredExpertCacheHotSlots = parsed
+             default:
+                 throw ServerArgumentError.invalid("unknown flag: \(flag)")
+             }
+         }
+         guard let model else { throw ServerArgumentError.invalid("--model is required") }
++        let expertCacheHotSlots = configuredExpertCacheHotSlots
++            ?? min(16, expertCacheSlots)
++        guard expertCacheHotSlots <= expertCacheSlots else {
++            throw ServerArgumentError.invalid(
++                "--expert-cache-hot-slots cannot exceed --expert-cache-slots")
++        }
+         return ServerArguments(model: model,
+                                port: port,
+                                modelIDOverride: modelIDOverride,
+                                maxContext: maxContext,
+                                queueLimit: queueLimit,
+                                promptCacheMode: promptCacheMode,
+-                               expertCacheSlots: expertCacheSlots)
++                               expertCacheSlots: expertCacheSlots,
++                               expertCacheResidency: expertCacheResidency,
++                               expertCacheHotSlots: expertCacheHotSlots)
+     }
+ }
+ 
+diff --git a/Sources/TurboFieldfareServer/Core/ServerInference.swift b/Sources/TurboFieldfareServer/Core/ServerInference.swift
+index 5b28ba2..10bbb98 100644
+--- a/Sources/TurboFieldfareServer/Core/ServerInference.swift
++++ b/Sources/TurboFieldfareServer/Core/ServerInference.swift
+@@ -129,7 +129,9 @@ public actor ServerModelSession: ServerInferenceBackend {
+     public static func load(modelDirectory: URL,
+                             maxContext: Int,
+                             promptCacheMode: ServerPromptCacheMode = .singlePrefix,
+-                            expertCacheSlots: Int) async throws -> ServerModelSession {
++                            expertCacheSlots: Int,
++                            expertCacheResidency: ExpertCacheResidencyMode = .fixed,
++                            expertCacheHotSlots: Int = 16) async throws -> ServerModelSession {
+         let tokenizerFolder = GFTokenizer.tokenizerFolder(forModelDirectory: modelDirectory)
+         guard let tokenizerFolder else {
+             throw GFTokenizerError.missingToolTemplate
+@@ -165,6 +167,11 @@ public actor ServerModelSession: ServerInferenceBackend {
+                                            context: context,
+                                            maxContext: maxContext,
+                                            runtimeConfiguration: runtime)
++        if expertCacheResidency == .osManaged {
++            runner.expertResidencyHotSlots = min(
++                max(0, expertCacheHotSlots),
++                runtime.expertCacheSlots)
++        }
+         let scratch = try RawCompletionScratch(context: context, vocab: model.config.vocabSize,
+                                                logitSoftcap: Float(model.config.finalLogitSoftcap))
+         let templateDigest = SHA256.hash(data: try Data(contentsOf: templateURL))
+@@ -177,6 +184,8 @@ public actor ServerModelSession: ServerInferenceBackend {
+             runtime.prefillPolicy.rawValue,
+             String(runtime.prefillChunkTokens),
+             runtime.headPath.rawValue,
++            expertCacheResidency.rawValue,
++            String(expertCacheHotSlots),
+         ].joined(separator: ":")
+         let runtimeDigest = SHA256.hash(data: Data(runtimeIdentity.utf8))
+             .map { String(format: "%02x", $0) }
+diff --git a/Tests/TurboFieldfare/Core/CLI/CLIArgumentsTests.swift b/Tests/TurboFieldfare/Core/CLI/CLIArgumentsTests.swift
+index 65599c9..c044ec0 100644
+--- a/Tests/TurboFieldfare/Core/CLI/CLIArgumentsTests.swift
++++ b/Tests/TurboFieldfare/Core/CLI/CLIArgumentsTests.swift
+@@ -16,6 +16,8 @@ import Testing
+         #expect(arguments.seed == nil)
+         #expect(arguments.stops.isEmpty)
+         #expect(!arguments.quiet)
++        #expect(arguments.expertCacheResidency == .fixed)
++        #expect(arguments.expertCacheHotSlots == 16)
+     }
+ 
+     @Test func generationOptionsParseAndStopsRepeat() throws {
+@@ -66,13 +68,33 @@ import Testing
+             "--temperature", "--top-k", "--top-p", "--repetition-penalty",
+             "--seed", "--stop", "--quiet", "--help",
+             "--rdadvise", "--expert-cache-slots", "--prefill-chunk",
+-            "--kv-snapshot",
++            "--kv-snapshot", "--expert-cache-residency", "--expert-cache-hot-slots",
+         ]
+         let words = Args.usage.split { $0.isWhitespace || $0 == "(" || $0 == ")" }
+         let options = Set(words.map(String.init).filter { $0.hasPrefix("--") })
+         #expect(options == expected)
+     }
+ 
++    @Test func osManagedExpertResidencyParsesAndValidatesHotSlots() throws {
++        let arguments = try Args.parse([
++            "--model", "m.gturbo", "--prompt", "hi",
++            "--expert-cache-slots", "96",
++            "--expert-cache-residency", "os-managed",
++            "--expert-cache-hot-slots", "16",
++        ])
++        #expect(arguments.expertCacheResidency == .osManaged)
++        #expect(arguments.expertCacheHotSlots == 16)
++
++        #expect(throws: ArgsError.invalidValue(
++            flag: "--expert-cache-hot-slots", value: "97")) {
++            _ = try Args.parse([
++                "--model", "m.gturbo", "--prompt", "hi",
++                "--expert-cache-slots", "96",
++                "--expert-cache-hot-slots", "97",
++            ])
++        }
++    }
++
+     @Test func unsupportedSelectorsAreRejected() {
+         for flag in ["--runtime-profile", "--experiment-id", "-h"] {
+             #expect(throws: ArgsError.unknownFlag(flag)) {
+diff --git a/Tests/TurboFieldfare/Core/Infrastructure/Streaming/PreadExpertStreamerTests+Purgeable.swift b/Tests/TurboFieldfare/Core/Infrastructure/Streaming/PreadExpertStreamerTests+Purgeable.swift
+new file mode 100644
+index 0000000..5ad6161
+--- /dev/null
++++ b/Tests/TurboFieldfare/Core/Infrastructure/Streaming/PreadExpertStreamerTests+Purgeable.swift
+@@ -0,0 +1,85 @@
++import Foundation
++import Metal
++import Testing
++
++@testable import TurboFieldfare
++
++extension PreadExpertStreamerTests {
++  @Test func coldSlotsBecomeVolatileWhileHotSlotStaysResident() throws {
++    let url = try Self.writeSyntheticLayer()
++    defer { try? FileManager.default.removeItem(at: url) }
++    let device = try MetalContext().device
++    let streamer = try PreadExpertStreamer(
++      layout: Self.makeLayout(path: url.path), device: device, slotCount: 4)
++
++    _ = try streamer.loadExpertsCached(experts: [0, 1, 2, 3])
++    for _ in 0..<3 {
++      _ = try streamer.loadExpertsCached(experts: [0])
++    }
++    let action = streamer.makeColdSlotsVolatile(keepingHotSlots: 1)
++    #expect(action.occupiedSlots == 4)
++    #expect(action.keptSlots == 1)
++    #expect(action.transitionedSlots == 3)
++    #expect(action.affectedBytes == UInt64(3 * Self.expertStride))
++
++    let hotPlan = streamer.planExpertsCached(experts: [0])
++    #expect(hotPlan.hits == 1)
++    let coldPlan = streamer.planExpertsCached(experts: [1])
++    #expect(coldPlan.hits == 1)
++    let cold = try streamer.executeExpertCachePlan(coldPlan)[0]
++    let got = Self.bytes(of: cold.buffer, offset: cold.offset, count: Self.expertStride)
++    #expect(got.allSatisfy { $0 == Self.tagByte(1) })
++
++    let stats = streamer.expertCacheResidencyStats()
++    #expect(stats.volatileTransitions == 3)
++    #expect(stats.revalidations == 1)
++    #expect(stats.retainedRevalidations == 1)
++    #expect(stats.emptyRecoveries == 0)
++  }
++
++  @Test func discardedColdSlotsBecomeMissesAndReloadExactBytes() throws {
++    let url = try Self.writeSyntheticLayer()
++    defer { try? FileManager.default.removeItem(at: url) }
++    let device = try MetalContext().device
++    let streamer = try PreadExpertStreamer(
++      layout: Self.makeLayout(path: url.path), device: device, slotCount: 4)
++
++    _ = try streamer.loadExpertsCached(experts: [0, 1, 2])
++    for _ in 0..<3 {
++      _ = try streamer.loadExpertsCached(experts: [0])
++    }
++    let action = streamer.discardColdSlots(keepingHotSlots: 1)
++    #expect(action.transitionedSlots == 2)
++    #expect(action.affectedBytes == UInt64(2 * Self.expertStride))
++
++    let plan = streamer.planExpertsCached(experts: [0, 1, 2])
++    #expect(plan.hits == 1)
++    #expect(plan.misses == [1, 2])
++    let results = try streamer.executeExpertCachePlan(plan)
++    for (index, result) in results.enumerated() {
++      let got = Self.bytes(
++        of: result.buffer, offset: result.offset, count: Self.expertStride)
++      #expect(got.allSatisfy { $0 == Self.tagByte([0, 1, 2][index]) })
++    }
++
++    let stats = streamer.expertCacheResidencyStats()
++    #expect(stats.explicitDiscards == 2)
++    #expect(stats.emptyRecoveries == 2)
++    #expect(stats.invalidatedSlots == 2)
++    #expect(stats.reclaimedBytes == UInt64(2 * Self.expertStride))
++  }
++
++  @Test func emptyCacheResidencyActionsAreNoOps() throws {
++    let url = try Self.writeSyntheticLayer()
++    defer { try? FileManager.default.removeItem(at: url) }
++    let device = try MetalContext().device
++    let streamer = try PreadExpertStreamer(
++      layout: Self.makeLayout(path: url.path), device: device, slotCount: 4)
++
++    #expect(streamer.makeColdSlotsVolatile(keepingHotSlots: 1)
++      == ExpertCacheResidencyAction())
++    #expect(streamer.discardColdSlots(keepingHotSlots: 1)
++      == ExpertCacheResidencyAction())
++    #expect(streamer.expertCacheResidencyStats() == ExpertCacheResidencyStats())
++  }
++}
+diff --git a/Tests/TurboFieldfare/Core/Runtime/QwenRunnerTests.swift b/Tests/TurboFieldfare/Core/Runtime/QwenRunnerTests.swift
+index af9b47e..f62ed23 100644
+--- a/Tests/TurboFieldfare/Core/Runtime/QwenRunnerTests.swift
++++ b/Tests/TurboFieldfare/Core/Runtime/QwenRunnerTests.swift
+@@ -93,6 +93,33 @@ import Metal
+         #expect(runner.continuationPosition == 9)
+     }
+ 
++    @Test func prefillLayerBoundaryOffersColdExpertSlots() async throws {
++        let dir = try QwenToySynthetic.write()
++        defer { try? FileManager.default.removeItem(at: dir) }
++        let ctx = try MetalContext()
++        let model = try Model.load(directoryURL: dir,
++                                   device: ctx.device,
++                                   expecting: .qwen36Toy())
++        let runner = try RealForwardRunner(model: model,
++                                           context: ctx,
++                                           maxContext: 64)
++        runner.expertResidencyHotSlots = 0
++        let logits = try makeLogits(ctx, vocab: 1024)
++        let tokens: [Int32] = [1, 2, 3, 4, 5, 6, 7, 8]
++
++        _ = try await runner.prefillChunked(
++            tokens: tokens[...],
++            startPosition: 0,
++            outputMode: .greedyIfAvailable,
++            config: .production(chunkTokens: 32),
++            into: logits,
++            onProgress: { _ in })
++
++        let residency = model.routedExpertCacheResidencyStats()
++        #expect(residency.volatileTransitions > 0)
++        #expect(residency.revalidations == 0)
++    }
++
+     /// Prefill/decode consistency: prefilling [t0] then decoding t1 must give
+     /// the same argmax as decoding t0, t1 step by step from a fresh state —
+     /// the two paths share state (KV + GDN recurrent state + conv tail).
+diff --git a/Tests/TurboFieldfareServer/OpenAIValidationTests.swift b/Tests/TurboFieldfareServer/OpenAIValidationTests.swift
+index f4e7b4d..1e3e6e0 100644
+--- a/Tests/TurboFieldfareServer/OpenAIValidationTests.swift
++++ b/Tests/TurboFieldfareServer/OpenAIValidationTests.swift
+@@ -300,6 +300,8 @@ struct ServerArgumentTests {
+         #expect(arguments.maxContext == 16_384)
+         #expect(arguments.queueLimit == 4)
+         #expect(arguments.promptCacheMode == .singlePrefix)
++        #expect(arguments.expertCacheResidency == .fixed)
++        #expect(arguments.expertCacheHotSlots == 16)
+     }
+ 
+     @Test func parsesSinglePrefixModeAndRejectsUnknownMode() throws {
+@@ -320,4 +322,22 @@ struct ServerArgumentTests {
+             ])
+         }
+     }
++
++    @Test func parsesOsManagedExpertResidency() throws {
++        let arguments = try ServerArguments.parse([
++            "--model", "model.gturbo",
++            "--expert-cache-slots", "96",
++            "--expert-cache-residency", "os-managed",
++            "--expert-cache-hot-slots", "16",
++        ])
++        #expect(arguments.expertCacheResidency == .osManaged)
++        #expect(arguments.expertCacheHotSlots == 16)
++        #expect(throws: ServerArgumentError.self) {
++            try ServerArguments.parse([
++                "--model", "model.gturbo",
++                "--expert-cache-slots", "16",
++                "--expert-cache-hot-slots", "17",
++            ])
++        }
++    }
+ }
+diff --git a/docs/ELASTICUMA_PURGEABLE_CACHE.md b/docs/ELASTICUMA_PURGEABLE_CACHE.md
+new file mode 100644
+index 0000000..231fd41
+--- /dev/null
++++ b/docs/ELASTICUMA_PURGEABLE_CACHE.md
+@@ -0,0 +1,104 @@
++# Reload-correct purgeable expert caching on Apple UMA
++
++Status: experimental research implementation. Qwen3.6 pressure/no-pressure and
++Gemma 4 no-pressure protocols pass on one M1 Max. It is a two-architecture,
++single-host result; cross-generation and independent reproduction remain open.
++
++## Problem
++
++A fixed routed-expert cache competes with the filesystem cache, KV state, the
++GPU, and every other process for the same Apple unified-memory pool. More expert
++slots can improve logical hit rate while making end-to-end inference slower by
++driving compression and page displacement. A useful cache therefore needs to be
++large when memory is available and cheaply reclaimable when it is not.
++
++## Mechanism
++
++Each expert slot is a Metal-owned `storageModeShared` buffer. At a GPU-safe
++boundary the runtime keeps the hottest slots nonvolatile and calls
++`setPurgeableState(.volatile)` on the cold remainder. macOS may reclaim those
++pages rather than compressing or swapping them.
++
++The cache never trusts a volatile hit. Before binding a matching slot, planning
++calls `setPurgeableState(.nonVolatile)` under the cache lock:
++
++- a retained return preserves the hit;
++- `.empty` invalidates the slot's expert identity and converts the access to a
++  normal `pread` miss;
++- the buffer is rebound only after the exact expert bytes have been reloaded.
++
++The transition runs after every synchronized prefill layer and after a complete
++decode step. This prevents the full logical cache from becoming resident during
++prefill before it is first offered to the OS. The fixed mode does not execute
++any purgeability path.
++
++Important invariants:
++
++1. A volatile resource is never consumed without a nonvolatile relock.
++2. `.empty` content is never treated as a hit.
++3. Purge transitions occur only after all GPU reads of the affected slots have
++   completed.
++4. Slot identity, LFU/recency state, residency state, and recovery counters are
++   serialized by the same cache lock.
++5. Model files remain immutable and single-copy; recovery uses positional reads
++   from the already-open packed layer file.
++
++## Controls
++
++CLI:
++
++```text
++--expert-cache-slots 96
++--expert-cache-residency os-managed
++--expert-cache-hot-slots 16
++```
++
++The server exposes the same three controls. `fixed` remains the default for
++backward compatibility. The CLI emits an `expert-residency` receipt containing
++the hot-slot target, volatile transitions, relocks, retained relocks, empty
++recoveries, explicit discards, invalidated slots, and recovered bytes.
++
++## Early frozen implementation gate (V5)
++
++Protocol: Qwen3.6-35B-A3B Q4, pinned packed model and runtime, Apple M1 Max
++(24-core GPU, 32 GiB), AC power, 4 GiB safety-bounded co-tenant allocation,
++256 generated tokens, one excluded warmup and five Latin-balanced measured
++pairs. The prompt was unseen before the mechanism and thresholds were frozen.
++All ten measured rows were admitted and produced one output SHA-256.
++
++| Metric | Fixed 96 slots | OS-managed 96 / hot 16 | Effect |
++| --- | ---: | ---: | ---: |
++| Median decode | 11.861 tok/s | 13.977 tok/s | 17.8% aggregate gain |
++| Paired throughput | — | — | 16.1% median gain |
++| Paired bootstrap 95% interval | — | — | 6.5–40.0% gain |
++| Peak physical footprint | 6.657 GiB | 4.430 GiB | 33.46% lower |
++| Peak compressor growth | 5.848 GiB | 1.004 GiB | 4.844 GiB lower |
++| Minimum free memory | 37% | 44% | +7 points |
++| Median effective expert hit rate | 91.77% | 88.77% | -3.00 points |
++| Peak swap growth | 0 | 0 | equal |
++
++Every candidate row observed non-zero `.empty` recovery (4,774–5,825 events)
++and 7.87–9.60 GiB of cumulative exact reloads. Cumulative reload bytes count
++repeated reclamation and are not a footprint measurement.
++
++Later final protocols compare the committed patch with untouched upstream
++fixed-16 and fixed-96 binaries. Qwen V6/V7 and Gemma V8 admit 45/45 positive
++rows with within-protocol output parity. The final paper reports paired median
++gains and fixed-96 footprint reductions; [the result ledger](../../docs/RESULTS.md)
++carries exact values, intervals, and artifact hashes.
++
++## Claim limits and open validation
++
++- The evidence establishes a strong local systems result against the same
++  runtime with fixed Metal-owned slots. It does not yet establish superiority
++  over every Mac runtime.
++- The 4 GiB co-tenant is controlled and safety-bounded, not a trace of a real
++  desktop workload.
++- Later Apple generations, long-context/concurrent desktop traces, energy, and
++  an independent operator remain required for a general Apple claim.
++- RSS includes reclaimable pages and is reported only as secondary telemetry;
++  `proc_pid_rusage().ri_phys_footprint` is the primary process memory measure.
++- The upstream suite currently has five pre-existing `RepackCLITests` failures:
++  those tests seek `TurboFieldfareRepack` while the package builds
++  `slipstream-repack`. The other 588 tests, including all new cache, inference,
++  CLI, and server tests, pass.

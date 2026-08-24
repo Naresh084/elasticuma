@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "elasticuma"
+dynamic = ["version"]
+description = "OS-managed routed-expert inference for Apple Silicon unified memory"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "Naresh Prajapati" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Operating System :: MacOS :: MacOS X",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "huggingface-hub>=0.35,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "matplotlib>=3.10,<4",
+  "pytest>=8.4,<10",
+  "ruff>=0.12,<1",
+]
+
+[project.scripts]
+elasticuma = "elasticuma.cli:main"
+euma = "elasticuma.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Naresh084/elasticuma"
+Repository = "https://github.com/Naresh084/elasticuma"
+Issues = "https://github.com/Naresh084/elasticuma/issues"
+Paper = "https://github.com/Naresh084/elasticuma/blob/main/paper/ElasticUMA-paper.pdf"
+
+[tool.setuptools.package-data]
+elasticuma = ["model_catalog.json"]
+
+[tool.setuptools.dynamic]
+version = { attr = "elasticuma.version.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]

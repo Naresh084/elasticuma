@@ -1,0 +1,9 @@
+# Unified diffs require one-character context-line prefixes. Do not treat those
+# prefixes as source-code trailing whitespace when validating this asset.
+runtime/patches/*.patch -whitespace
+paper/figures/*.svg -whitespace
+
+*.docx binary
+*.pdf binary
+*.png binary
+*.tar.gz binary

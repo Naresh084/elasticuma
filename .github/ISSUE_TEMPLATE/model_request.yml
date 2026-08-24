@@ -1,0 +1,50 @@
+name: Model support request
+description: Propose a checkpoint or architecture with exact provenance.
+title: "model: "
+labels: ["model-support"]
+body:
+  - type: input
+    id: repository
+    attributes:
+      label: Checkpoint repository
+      placeholder: owner/name
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: Immutable revision
+      description: Provide the exact 40-character commit, not main or latest.
+    validations:
+      required: true
+  - type: textarea
+    id: architecture
+    attributes:
+      label: Architecture and routing
+      description: Layers, total/active/shared experts, attention or recurrent state, quantization, tokenizer, and license.
+    validations:
+      required: true
+  - type: dropdown
+    id: compatibility
+    attributes:
+      label: Expected work
+      options:
+        - Existing native architecture, new checkpoint profile
+        - New native architecture implementation
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Existing compatibility evidence
+      description: Commands, deterministic output comparison, hardware, and all observed failures or limits.
+  - type: checkboxes
+    id: agreement
+    attributes:
+      label: Agreement
+      options:
+        - label: I understand that a catalog JSON file alone does not make a new architecture supported.
+          required: true
+        - label: I will not upload model weights to this repository.
+          required: true

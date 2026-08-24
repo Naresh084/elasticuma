@@ -1,0 +1,4 @@
+Implement an immutable, thread-safe byte-budgeted LRU cache in Python. Explain
+the invariants, include type annotations, and provide tests for replacement,
+oversized entries, repeated admission, and concurrent reads. Do not use external
+packages.

@@ -1,0 +1,67 @@
+[experiment]
+name = "purgeable-upstream-nopressure-v7-reproduction"
+model_repo = "mlx-community/Qwen3.6-35B-A3B-4bit"
+model_revision = "38740b847e4cb78f352aba30aa41c76e08e6eb46"
+prompt_file = "configs/prompts/purgeable-nopressure-heldout.txt"
+context_tokens = 4096
+max_tokens = 256
+seed = 104729
+warmups = 1
+repetitions = 5
+sample_interval_seconds = 0.25
+start_min_free_percent = 40.0
+recovery_stable_samples = 3
+recovery_timeout_seconds = 90
+min_free_percent = 25.0
+max_swap_delta_mib = 384
+warmup_max_swap_delta_mib = 768
+timeout_seconds = 1200
+adapter = "command-json-v1"
+worker_process_name = "slipstream"
+required_power_source = "AC Power"
+require_low_power_mode_off = true
+require_no_thermal_warning = true
+require_native_pressure_monitor = true
+require_output_parity = true
+require_token_id_parity = false
+require_expert_telemetry = true
+fail_fast = true
+allow_live_pressure = false
+
+[[arms]]
+name = "upstream-fixed-16-no-pressure"
+cache_mib = 1136
+environment = { ELASTICUMA_SLIPSTREAM_BIN = ".runtime/slipstream/.build/release/slipstream" }
+command = [
+  "python3", "scripts/run_pinned_runtime.py",
+  "--model", "{model_path}", "--prompt-file", "{prompt_file}",
+  "--cache-mib", "{cache_mib}", "--context", "{context_tokens}",
+  "--max-tokens", "{max_tokens}", "--seed", "{seed}",
+  "--result", "{result_path}",
+]
+
+[[arms]]
+name = "upstream-fixed-96-no-pressure"
+cache_mib = 6816
+environment = { ELASTICUMA_SLIPSTREAM_BIN = ".runtime/slipstream/.build/release/slipstream" }
+command = [
+  "python3", "scripts/run_pinned_runtime.py",
+  "--model", "{model_path}", "--prompt-file", "{prompt_file}",
+  "--cache-mib", "{cache_mib}", "--context", "{context_tokens}",
+  "--max-tokens", "{max_tokens}", "--seed", "{seed}",
+  "--result", "{result_path}",
+]
+
+[[arms]]
+name = "elasticuma-layerwise-96-hot16-no-pressure"
+cache_mib = 6816
+environment = { ELASTICUMA_SLIPSTREAM_BIN = ".runtime/elasticuma/.build/release/slipstream" }
+command = [
+  "python3", "scripts/run_pinned_runtime.py",
+  "--model", "{model_path}", "--prompt-file", "{prompt_file}",
+  "--cache-mib", "{cache_mib}", "--context", "{context_tokens}",
+  "--max-tokens", "{max_tokens}", "--seed", "{seed}",
+  "--expert-cache-residency", "os-managed",
+  "--expert-cache-hot-slots", "16",
+  "--result", "{result_path}",
+]

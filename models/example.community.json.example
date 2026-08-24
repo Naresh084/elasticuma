@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "models": [
+    {
+      "id": "example-moe",
+      "aliases": ["example-moe-q4"],
+      "display_name": "Example Compatible MoE Q4",
+      "architecture": "replace-with-native-architecture-id",
+      "repo_id": "owner/repository",
+      "revision": "0000000000000000000000000000000000000000",
+      "source_index_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "packed_model_id": "replace-with-exact-manifest-model-id",
+      "repack_selector": "replace-with-native-repacker-selector",
+      "path_prefix": "example-moe",
+      "layers": 1,
+      "total_experts": 8,
+      "active_experts": 1,
+      "default_cache_slots": 8,
+      "default_hot_slots": 8,
+      "minimum_ram_gib": 16,
+      "verification": "community",
+      "evidence": "Replace with a reproducible compatibility receipt"
+    }
+  ]
+}
