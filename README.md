@@ -12,8 +12,6 @@ unified memory available to the rest of your Mac.**
 
 ![ElasticUMA running Qwen locally in the native Mac app](assets/elasticuma-mac-chat.png)
 
-*A real Qwen3.6-35B-A3B response generated locally by the release Mac app.*
-
 ## About
 
 ElasticUMA is a local Mixture-of-Experts (MoE) inference runtime for Apple
