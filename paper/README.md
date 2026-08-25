@@ -5,7 +5,7 @@
 
 Author: Naresh Prajapati, Independent Researcher
 
-Email: [naresh@proscendia.com](mailto:naresh@proscendia.com)
+Email: [prajapatinaresh084.pn@gmail.com](mailto:prajapatinaresh084.pn@gmail.com)
 
 The paper supports a two-architecture, single-M1-Max mechanism claim. It does
 not claim all Apple generations, energy superiority, or independent

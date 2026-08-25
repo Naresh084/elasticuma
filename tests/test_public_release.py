@@ -13,7 +13,7 @@ def test_public_runtime_patch_and_paper_are_pinned() -> None:
         "9db7cbc8ce330068f292174e06834af43bf1607091a538d3dbad9f3eba4e1733"
     )
     assert sha256_file(ROOT / "paper/ElasticUMA-paper.pdf") == (
-        "5ddfdca7fc5d12cef7b106bb3f93e237186f09a373a0c7303fedbf78f13d7a27"
+        "3334189ace4bea20267fd84a1fd91a5c76bf67de3b45eea570e2ee5745beb3c0"
     )
 
 
