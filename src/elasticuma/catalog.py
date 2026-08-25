@@ -28,6 +28,7 @@ _ALLOWED_KEYS = {
     "default_cache_slots",
     "default_hot_slots",
     "minimum_ram_gib",
+    "input_modalities",
     "verification",
     "evidence",
 }
@@ -51,6 +52,7 @@ class ModelProfile:
     default_cache_slots: int
     default_hot_slots: int
     minimum_ram_gib: int
+    input_modalities: tuple[str, ...]
     verification: str
     evidence: str
     source: str
@@ -76,6 +78,22 @@ def _positive_int(payload: dict[str, Any], key: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(f"model profile field {key!r} must be a positive integer")
     return value
+
+
+def _input_modalities(payload: dict[str, Any]) -> tuple[str, ...]:
+    value = payload.get("input_modalities", ["text"])
+    allowed = {"text", "image", "audio", "video"}
+    if (
+        not isinstance(value, list)
+        or not value
+        or not all(isinstance(item, str) and item in allowed for item in value)
+        or len(set(value)) != len(value)
+    ):
+        raise ValueError(
+            "model profile input_modalities must be a unique non-empty list of "
+            "text, image, audio, or video"
+        )
+    return tuple(value)
 
 
 def parse_profile(payload: dict[str, Any], *, source: str) -> ModelProfile:
@@ -137,6 +155,7 @@ def parse_profile(payload: dict[str, Any], *, source: str) -> ModelProfile:
         default_cache_slots=cache_slots,
         default_hot_slots=hot_slots,
         minimum_ram_gib=_positive_int(payload, "minimum_ram_gib"),
+        input_modalities=_input_modalities(payload),
         verification=verification,
         evidence=_string(payload, "evidence"),
         source=source,

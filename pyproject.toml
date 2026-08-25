@@ -40,6 +40,17 @@ Paper = "https://github.com/Naresh084/elasticuma/blob/main/paper/ElasticUMA-pape
 [tool.setuptools.package-data]
 elasticuma = ["model_catalog.json"]
 
+[tool.setuptools.data-files]
+"share/elasticuma/runtime/patches" = [
+  "runtime/patches/elasticuma-purgeable.patch",
+  "runtime/patches/elasticuma-app.patch",
+]
+"share/elasticuma/scripts" = [
+  "scripts/bootstrap_candidate_runtime.sh",
+  "scripts/package_macos_app.sh",
+]
+"share/elasticuma/macos" = ["macos/Info.plist"]
+
 [tool.setuptools.dynamic]
 version = { attr = "elasticuma.version.__version__" }
 

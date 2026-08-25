@@ -17,11 +17,17 @@ from .model_store import (
     find_existing_snapshot,
     project_manifest_root,
 )
+from .runtime_provenance import (
+    APP_PATCH_SHA256,
+    MECHANISM_PATCH_SHA256,
+    RUNTIME_PATCHSET_SHA256,
+    UPSTREAM_RUNTIME_REVISION,
+)
 from .util import atomic_write_json, gib, sha256_file, utc_now
 
 SLIPSTREAM_REPO = "https://github.com/dwijenpatel/slipstream.git"
-SLIPSTREAM_REVISION = "01f7d5e774ca940982ea3aa012bd880b5c9d634e"
-ELASTICUMA_PATCH_SHA256 = "9db7cbc8ce330068f292174e06834af43bf1607091a538d3dbad9f3eba4e1733"
+SLIPSTREAM_REVISION = UPSTREAM_RUNTIME_REVISION
+ELASTICUMA_PATCH_SHA256 = RUNTIME_PATCHSET_SHA256
 PackedModelSpec = ModelProfile
 QWEN36_SPEC = resolve_profile("qwen36")
 GEMMA4_SPEC = resolve_profile("gemma4")
@@ -117,8 +123,13 @@ def packed_preflight(runtime_root: Path, spec: PackedModelSpec = QWEN36_SPEC) ->
             "a complete source snapshot already exists in another Hugging Face cache; "
             "refusing a second full transfer until a local-source repack path is selected"
         )
-    info = HfApi().model_info(spec.repo_id, revision=spec.revision, files_metadata=True)
-    published = sum(int(item.size or 0) for item in info.siblings or [])
+    if existing:
+        # A verified packed model is a complete reusable result. Do not require
+        # Hub access merely to rediscover the source's published byte count.
+        published = _directory_bytes(model_path)
+    else:
+        info = HfApi().model_info(spec.repo_id, revision=spec.revision, files_metadata=True)
+        published = sum(int(item.size or 0) for item in info.siblings or [])
     packed_root = model_path.parent
     packed_root.mkdir(parents=True, exist_ok=True)
     disk = shutil.disk_usage(packed_root)
@@ -202,6 +213,8 @@ def _register(
         "runtime_repo": SLIPSTREAM_REPO,
         "runtime_revision": SLIPSTREAM_REVISION,
         "runtime_patch_sha256": ELASTICUMA_PATCH_SHA256,
+        "runtime_mechanism_patch_sha256": MECHANISM_PATCH_SHA256,
+        "runtime_app_patch_sha256": APP_PATCH_SHA256,
         "runtime_binary_sha256": sha256_file(runtime_root / ".build/release/slipstream"),
         "repacker_binary_sha256": sha256_file(runtime_root / ".build/release/slipstream-repack"),
         "manifest_sha256": sha256_file(manifest_path),

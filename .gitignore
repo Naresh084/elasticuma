@@ -17,6 +17,7 @@ build/
 # Local research workspace. These files are retained on development machines
 # but are intentionally absent from the end-user repository.
 /AGENTS.md
+/design-qa.md
 /artifacts/
 /configs/
 /reports/
@@ -29,6 +30,8 @@ build/
 !/docs/install.md
 !/docs/models.md
 !/docs/quickstart.md
+!/docs/app.md
+!/docs/sdk.md
 
 # Keep the final paper and its buildable LaTeX source; local ledgers and
 # duplicate render assets remain ignored.
@@ -42,6 +45,7 @@ build/
 # Only the end-user runtime bootstrap belongs in the public scripts directory.
 /scripts/*
 !/scripts/bootstrap_candidate_runtime.sh
+!/scripts/package_macos_app.sh
 
 # Secrets and local overrides.
 .env

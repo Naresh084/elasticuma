@@ -29,6 +29,7 @@ if [ "$#" -eq 1 ]; then
 else
   echo
   echo "ElasticUMA is installed. Next:"
+  echo "  uv run euma app open"
   echo "  uv run euma models"
   echo "  uv run euma setup qwen36"
 fi

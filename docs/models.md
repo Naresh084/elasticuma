@@ -12,10 +12,16 @@ ElasticUMA uses three simple support labels:
 
 ## Supported today
 
-| ID | Exact verified checkpoint | Native family | Shape | Status |
-|---|---|---|---|---|
-| `qwen36` | `mlx-community/Qwen3.6-35B-A3B-4bit` | `qwen36` / `qwen3_5_moe` | 40 layers, 256 experts, 8 routed | Verified on M1 Max / 32 GiB |
-| `gemma4` | `mlx-community/gemma-4-26b-a4b-it-4bit` | `gemma4` | 30 layers, 128 experts, 8 routed | Verified on M1 Max / 32 GiB |
+| ID | Exact verified checkpoint | Native family | Shape | ElasticUMA inputs | Status |
+|---|---|---|---|---|---|
+| `qwen36` | `mlx-community/Qwen3.6-35B-A3B-4bit` | `qwen36` / `qwen3_5_moe` | 40 layers, 256 experts, 8 routed | Text | Verified on M1 Max / 32 GiB |
+| `gemma4` | `mlx-community/gemma-4-26b-a4b-it-4bit` | `gemma4` | 30 layers, 128 experts, 8 routed | Text | Verified on M1 Max / 32 GiB |
+
+Modalities are declared per model profile. They describe the complete
+ElasticUMA path—installer, tokenizer, runtime, app, CLI, and server—not merely
+what exists upstream. The current Qwen and Gemma installers intentionally drop
+vision-tower tensors, so both profiles remain text-only until their vision paths
+are implemented and validated.
 
 List these from the installed CLI:
 
@@ -54,7 +60,7 @@ not mean the model is impossible forever.
 
 | Model | Architecture / scale | ElasticUMA status | Main missing work |
 |---|---|---|---|
-| [Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) | `qwen3_5_moe`, 35B total / 3B active | **Verified** through the pinned Q4 profile | Text path works; native vision input is not exposed |
+| [Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) | `qwen3_5_moe`, 35B total / 3B active | **Verified** through the pinned Q4 profile | Text generation is implemented; the upstream vision tower is deliberately not packed |
 | [Gemma 4 26B-A4B](https://huggingface.co/google/gemma-4-26B-A4B-it) | Gemma 4 MoE, 26B total / about 4B active | **Verified** through the pinned Q4 profile | Text path works; other sizes and formats need validation |
 | [Qwen3.5-35B-A3B](https://huggingface.co/Qwen/Qwen3.5-35B-A3B) | Qwen `qwen3_5_moe` family | **Not verified** | Exact config, tokenizer, packing, output parity, and kernels must pass; the similar family name is insufficient |
 | [Qwen3.8-2.4T-A95B](https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B) | `qwen3_5_moe_text`, 2.4T total / 95B active | **Not implemented** | New scale/config support; the active working set is itself far beyond a 32 GiB Mac |
@@ -95,10 +101,6 @@ Two models can both say “MoE” and still disagree on all of these:
 - tokenizer, chat template, tool calls, and stop tokens; and
 - the Metal kernels required to reproduce the model's numerical semantics.
 
-FreeToken's own model documentation uses the same boundary: known-good
-checkpoints are listed because its prebuilt kernels are tuned for those
-architectures; other checkpoints are not accepted merely because they are MoE.
-
 ## Adding support
 
 For a checkpoint that truly matches an implemented family, add a pinned catalog
@@ -109,6 +111,10 @@ profile under `models/` and validate the exact output. A new family needs:
 3. router, shared-expert, attention/recurrent, and context semantics;
 4. Metal kernels plus numerical fixtures; and
 5. fixed-versus-OS-managed output parity and a repeatable Mac benchmark.
+
+Set `input_modalities` in each catalog profile only after those modalities pass
+end-to-end tests. A multimodal upstream repository is not itself a multimodal
+ElasticUMA support claim.
 
 Open a model-support issue with the official model link, exact revision,
 architecture/config, desired quantization, and target Mac. Do not download a

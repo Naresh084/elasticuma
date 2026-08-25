@@ -18,6 +18,7 @@
       "default_cache_slots": 8,
       "default_hot_slots": 8,
       "minimum_ram_gib": 16,
+      "input_modalities": ["text"],
       "verification": "community",
       "evidence": "Replace with a reproducible compatibility receipt"
     }

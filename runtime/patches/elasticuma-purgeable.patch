@@ -900,7 +900,7 @@ index f4e7b4d..1e3e6e0 100644
  }
 diff --git a/docs/ELASTICUMA_PURGEABLE_CACHE.md b/docs/ELASTICUMA_PURGEABLE_CACHE.md
 new file mode 100644
-index 0000000..231fd41
+index 0000000..c39a809
 --- /dev/null
 +++ b/docs/ELASTICUMA_PURGEABLE_CACHE.md
 @@ -0,0 +1,104 @@

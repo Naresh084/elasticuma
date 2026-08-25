@@ -12,6 +12,8 @@ euma <command> [options]
 | `euma models` | Show verified/community models and whether they are installed |
 | `euma run MODEL PROMPT` | Generate one response |
 | `euma serve MODEL` | Start the local OpenAI/Anthropic-compatible API |
+| `euma app open` | Build if needed and open the native Mac app |
+| `euma app build` | Package `ElasticUMA.app` without opening it |
 | `euma doctor` | Show privacy-safe Mac, toolchain, runtime, and cache readiness |
 | `euma runtime install` | Reconstruct and build the pinned native runtime |
 | `euma runtime status` | Check runtime provenance and binaries |
@@ -37,6 +39,10 @@ automation.
 euma models
 euma models --json
 ```
+
+The table includes each profile's end-to-end `INPUTS`. This is model-specific;
+the current verified profiles report `text` even when the upstream repository
+also contains vision tensors that ElasticUMA does not install.
 
 The normal view is a short human-readable table. JSON includes stable ids and
 repository ids for scripts.
@@ -77,6 +83,24 @@ euma serve MODEL [options]
 | `--dry-run` | off | Print the launch plan without starting the server |
 
 The server always binds to `127.0.0.1`.
+
+One server supports both client protocols:
+
+- OpenAI Chat Completions: `POST /v1/chat/completions`
+- Anthropic Messages: `POST /v1/messages`
+
+Both routes use the same loaded model process and canonical model copy.
+
+## Native Mac app
+
+```bash
+euma app open
+euma app build --configuration release
+euma app build --output /absolute/output/directory
+```
+
+The packaged app, CLI, and SDK use the same canonical runtime and model cache.
+No model is downloaded by `app build`.
 
 ## Advanced model-store commands
 

@@ -3,7 +3,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from elasticuma.runtime_store import GEMMA4_SPEC, QWEN36_SPEC, _register
+import pytest
+
+import elasticuma.runtime_store as runtime_store
+from elasticuma.runtime_store import (
+    GEMMA4_SPEC,
+    QWEN36_SPEC,
+    _register,
+    packed_model_path,
+    packed_preflight,
+)
 from elasticuma.util import sha256_file
 
 
@@ -40,3 +49,39 @@ def test_generic_packed_registration_accepts_each_pinned_model(tmp_path: Path) -
         assert payload["repo_id"] == spec.repo_id
         assert payload["resolved_revision"] == spec.revision
         assert payload["packed_model_id"] == spec.packed_model_id
+
+
+def test_existing_verified_model_preflight_is_offline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ELASTICUMA_CACHE_ROOT", str(tmp_path / "cache"))
+    runtime = tmp_path / "runtime"
+    release = runtime / ".build/release"
+    release.mkdir(parents=True)
+    for name in ("slipstream", "slipstream-repack"):
+        (release / name).write_bytes(b"binary")
+    model = packed_model_path(QWEN36_SPEC)
+    model.mkdir(parents=True)
+    (model / "manifest.json").write_text("{}", encoding="utf-8")
+    (model / "verified-install.json").write_text("{}", encoding="utf-8")
+    (model / "model_weights.bin").write_bytes(b"weights")
+    monkeypatch.setattr(
+        runtime_store,
+        "_runtime_head",
+        lambda _root: runtime_store.SLIPSTREAM_REVISION,
+    )
+    monkeypatch.setattr(
+        runtime_store,
+        "_runtime_patch_sha256",
+        lambda _root: runtime_store.ELASTICUMA_PATCH_SHA256,
+    )
+    monkeypatch.setattr(runtime_store, "find_existing_snapshot", lambda *_args: None)
+    monkeypatch.setattr(
+        runtime_store,
+        "HfApi",
+        lambda: (_ for _ in ()).throw(AssertionError("Hub must not be contacted")),
+    )
+
+    plan = packed_preflight(runtime, QWEN36_SPEC)
+    assert plan["verified_existing"] is True
+    assert plan["allowed"] is True

@@ -18,6 +18,7 @@
       "default_cache_slots": 96,
       "default_hot_slots": 16,
       "minimum_ram_gib": 32,
+      "input_modalities": ["text"],
       "verification": "admitted",
       "evidence": "V6 pressure and V7 no-pressure on M1 Max"
     },
@@ -38,6 +39,7 @@
       "default_cache_slots": 96,
       "default_hot_slots": 16,
       "minimum_ram_gib": 32,
+      "input_modalities": ["text"],
       "verification": "admitted",
       "evidence": "V8 no-pressure on M1 Max"
     }

@@ -13,6 +13,22 @@ Swift/Metal runtime. It does not download a model.
 
 ## 2. Pick and install a model
 
+### Native Mac app
+
+```bash
+uv run euma app open
+```
+
+Choose a verified model in **Models**, approve its storage plan, then return to
+**Chat**. The app, CLI, and SDK reuse the same canonical model copy.
+
+The Models screen also searches Hugging Face live. A result is installable only
+when its complete native shape and tensor-index fingerprint are admitted. Input
+badges are per model; both current built-in profiles are text-only in
+ElasticUMA.
+
+### Terminal
+
 ```bash
 uv run euma models
 uv run euma setup qwen36
@@ -23,7 +39,7 @@ free disk, and the disk reserve before asking for confirmation. A completed
 install is reused; an interrupted pack resumes instead of starting another
 model copy.
 
-## 3. Generate
+## 3. Generate from the terminal
 
 ```bash
 uv run euma run qwen36 "Why can a large cache make a Mac slower?"
@@ -42,11 +58,27 @@ uv run euma run qwen36 "Hello" --dry-run
 uv run euma serve qwen36
 ```
 
-In another terminal:
+In another terminal, use either client protocol.
+
+OpenAI-compatible request:
 
 ```bash
 curl http://127.0.0.1:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
+  -d '{
+    "model": "qwen36",
+    "messages": [{"role": "user", "content": "What is an MoE model?"}],
+    "max_tokens": 256,
+    "stream": true
+  }'
+```
+
+Anthropic-compatible request:
+
+```bash
+curl http://127.0.0.1:8080/v1/messages \
+  -H 'Content-Type: application/json' \
+  -H 'anthropic-version: 2023-06-01' \
   -d '{
     "model": "qwen36",
     "messages": [{"role": "user", "content": "What is an MoE model?"}],

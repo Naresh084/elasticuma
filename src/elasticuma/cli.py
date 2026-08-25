@@ -25,19 +25,17 @@ from .runtime_store import (
     packed_model_path,
     packed_preflight,
 )
+from .sdk import DownloadConfirmationRequired, ElasticUMA, default_project_root
 from .serving import (
     catalog_paths,
     install_runtime,
-    launch,
-    run_plan,
     runtime_root,
     runtime_status,
-    serve_plan,
 )
 from .util import atomic_write_json, gib, jsonable, sha256_file, utc_now
 from .version import __version__
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = default_project_root()
 
 
 def _emit(value: Any, *, as_json: bool = True) -> None:
@@ -94,6 +92,10 @@ def _extra_catalogs(args: argparse.Namespace) -> tuple[Path, ...]:
     return tuple(Path(value) for value in getattr(args, "catalog", []) or [])
 
 
+def _client(args: argparse.Namespace) -> ElasticUMA:
+    return ElasticUMA(PROJECT_ROOT, catalogs=_extra_catalogs(args))
+
+
 def _model_catalog(args: argparse.Namespace) -> int:
     paths = catalog_paths(PROJECT_ROOT, _extra_catalogs(args))
     rows = []
@@ -113,24 +115,17 @@ def _model_catalog(args: argparse.Namespace) -> int:
 
 
 def _models(args: argparse.Namespace) -> int:
-    paths = catalog_paths(PROJECT_ROOT, _extra_catalogs(args))
     rows = []
-    for profile in load_profiles(paths):
-        model_path = packed_model_path(profile)
-        installed = (
-            model_path.is_dir()
-            and (model_path / "manifest.json").is_file()
-            and (model_path / "verified-install.json").is_file()
-            and (model_path / "model_weights.bin").is_file()
-        )
+    for model in _client(args).models():
         rows.append(
             {
-                "id": profile.id,
-                "model": profile.display_name,
-                "support": "verified" if profile.verification == "admitted" else "community",
-                "installed": installed,
-                "minimum_ram_gib": profile.minimum_ram_gib,
-                "repo_id": profile.repo_id,
+                "id": model.id,
+                "model": model.display_name,
+                "support": model.support,
+                "installed": model.installed,
+                "minimum_ram_gib": model.minimum_ram_gib,
+                "input_modalities": model.input_modalities,
+                "repo_id": model.repo_id,
             }
         )
     if args.json:
@@ -140,11 +135,15 @@ def _models(args: argparse.Namespace) -> int:
         "id": max(2, *(len(str(row["id"])) for row in rows)),
         "model": max(5, *(len(str(row["model"])) for row in rows)),
     }
-    print(f"{'ID':<{widths['id']}}  {'MODEL':<{widths['model']}}  SUPPORT   INSTALLED  MEMORY")
+    print(
+        f"{'ID':<{widths['id']}}  {'MODEL':<{widths['model']}}  "
+        "SUPPORT   INSTALLED  INPUTS     MEMORY"
+    )
     for row in rows:
         print(
             f"{row['id']:<{widths['id']}}  {row['model']:<{widths['model']}}  "
             f"{row['support']:<9} {('yes' if row['installed'] else 'no'):<10} "
+            f"{','.join(row['input_modalities']):<10} "
             f"{row['minimum_ram_gib']} GiB+"
         )
     print("\nA verified .gturbo path can also be passed directly to `euma run` or `euma serve`.")
@@ -176,59 +175,41 @@ def _confirm_model_install(profile_name: str, size_gib: float) -> None:
 
 
 def _setup(args: argparse.Namespace) -> int:
-    profile = resolve_profile(
-        args.model,
-        extra_catalogs=catalog_paths(PROJECT_ROOT, _extra_catalogs(args)),
-    )
-    status = runtime_status(PROJECT_ROOT)
-    if args.dry_run and status["ready"] is not True:
-        payload = {
-            "runtime_action": "install",
-            "model": profile.public_dict(),
-            "model_action": "preflight after runtime installation",
-        }
-        if args.json:
-            _emit(payload)
-        else:
-            print("Setup plan")
-            print("  Runtime: build the pinned Swift/Metal runtime")
-            print(f"  Model:   {profile.display_name} ({profile.id})")
-            print("  Storage: run safety and duplicate-copy checks after the runtime build")
-        return 0
-    if status["ready"] is not True:
-        status = install_runtime(PROJECT_ROOT)
-    plan = packed_preflight(Path(args.runtime_root), profile)
+    client = _client(args)
+    plan = client.plan_setup(args.model)
     if args.dry_run:
         if args.json:
-            _emit({"runtime": status, "model": profile.public_dict(), "preflight": plan})
+            _emit(plan.as_dict())
         else:
             print("Setup plan")
-            print("  Runtime: ready")
-            print(f"  Model:   {profile.display_name} ({profile.id})")
-            print(f"  Source:  {plan['source_published_gib']:.1f} GiB published")
-            print(f"  Target:  {plan['model_path']}")
-            print(f"  Allowed: {'yes' if plan['allowed'] else 'no'}")
-            for reason in plan["reasons"]:
-                print(f"  Blocker: {reason}")
-        return 0 if plan["allowed"] else 2
-    if not plan["allowed"]:
-        if args.json:
-            _emit({"runtime": status, "model": profile.public_dict(), "preflight": plan})
-        else:
-            print(f"Setup refused for {profile.display_name}:", file=sys.stderr)
-            for reason in plan["reasons"]:
-                print(f"  - {reason}", file=sys.stderr)
-        return 2
-    if not plan["verified_existing"] and not args.yes:
-        _confirm_model_install(profile.display_name, float(plan["source_published_gib"]))
-    installed = install_packed_model(PROJECT_ROOT, Path(args.runtime_root), profile)
+            runtime = "ready" if plan.runtime_action == "reuse" else "build pinned runtime"
+            print(f"  Runtime: {runtime}")
+            print(f"  Model:   {plan.model.display_name} ({plan.model.id})")
+            print(f"  Target:  {plan.model.model_path}")
+            if plan.source_published_bytes is not None:
+                print(f"  Source:  {gib(plan.source_published_bytes):.1f} GiB published")
+            if plan.allowed is not None:
+                print(f"  Allowed: {'yes' if plan.allowed else 'no'}")
+            for reason in plan.reasons:
+                print(f"  Note:    {reason}")
+        return 0 if plan.allowed is not False else 2
+
+    try:
+        result = client.setup(args.model, allow_download=args.yes)
+    except DownloadConfirmationRequired as exc:
+        _confirm_model_install(
+            exc.plan.model.display_name,
+            gib(exc.plan.source_published_bytes or 0),
+        )
+        result = client.setup(args.model, allow_download=True)
     if args.json:
-        _emit({"runtime": status, "model": profile.public_dict(), "installed": installed})
+        _emit(result.as_dict())
     else:
-        print(f"Ready: {profile.display_name}")
-        print(f"Model: {installed['model_path']}")
-        print(f'Run:   uv run euma run {profile.id} "Hello"')
-        print(f"Serve: uv run euma serve {profile.id}")
+        print(f"Ready: {result.model.display_name}")
+        print(f"Model: {result.model_path}")
+        print(f'Run:   euma run {result.model.id} "Hello"')
+        print(f"Serve: euma serve {result.model.id}")
+        print("App:   euma app open")
     return 0
 
 
@@ -263,8 +244,7 @@ def _runtime_install(_args: argparse.Namespace) -> int:
 
 
 def _serve(args: argparse.Namespace) -> int:
-    plan = serve_plan(
-        PROJECT_ROOT,
+    plan = _client(args).plan_serve(
         _one_reference(args, "model_ref", "model_option"),
         port=args.port,
         max_context=args.max_context,
@@ -273,12 +253,11 @@ def _serve(args: argparse.Namespace) -> int:
         hot_slots=args.hot_slots,
         residency=args.residency,
         model_id=args.model_id,
-        extra_catalogs=_extra_catalogs(args),
     )
     if args.dry_run:
         _emit(plan.public_dict())
         return 0
-    launch(plan)
+    ElasticUMA.launch(plan)
     return 0
 
 
@@ -286,8 +265,7 @@ def _run(args: argparse.Namespace) -> int:
     prompt_values = [value for value in (args.prompt_text, args.prompt_option) if value]
     if len(prompt_values) != 1:
         raise ValueError("provide one prompt as a positional argument or with --prompt")
-    plan = run_plan(
-        PROJECT_ROOT,
+    plan = _client(args).plan_run(
         _one_reference(args, "model_ref", "model_option"),
         prompt_values[0],
         max_new=args.max_new,
@@ -296,12 +274,34 @@ def _run(args: argparse.Namespace) -> int:
         hot_slots=args.hot_slots,
         residency=args.residency,
         seed=args.seed,
-        extra_catalogs=_extra_catalogs(args),
+        diagnostics=args.diagnostics,
     )
     if args.dry_run:
         _emit(plan.public_dict())
         return 0
-    launch(plan)
+    ElasticUMA.launch(plan)
+    return 0
+
+
+def _app_build(args: argparse.Namespace) -> int:
+    result = _client(args).build_app(
+        output_root=args.output,
+        configuration=args.configuration,
+    )
+    if args.json:
+        _emit(result.as_dict())
+    else:
+        print(f"ElasticUMA.app ready: {result.path}")
+        print("Open it with: euma app open")
+    return 0
+
+
+def _app_open(args: argparse.Namespace) -> int:
+    path = _client(args).open_app(
+        build_if_missing=not args.no_build,
+        output_root=args.output,
+    )
+    print(f"Opened {path}")
     return 0
 
 
@@ -465,7 +465,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(
         dest="command",
         required=True,
-        metavar="{setup,models,run,serve,doctor,runtime,model}",
+        metavar="{setup,models,run,serve,app,doctor,runtime,model}",
     )
 
     setup = subparsers.add_parser("setup", help="build the runtime and safely install one model")
@@ -504,6 +504,27 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_install.set_defaults(func=_runtime_install)
     runtime_check = runtime_sub.add_parser("status", help="report runtime build readiness")
     runtime_check.set_defaults(func=_runtime_status)
+
+    app = subparsers.add_parser("app", help="build or open the native ElasticUMA Mac app")
+    app_sub = app.add_subparsers(dest="app_command", required=True)
+    app_build = app_sub.add_parser("build", help="package the native Mac app")
+    app_build.add_argument("--output", help="directory that will contain ElasticUMA.app")
+    app_build.add_argument(
+        "--configuration",
+        choices=("debug", "release"),
+        default="release",
+        help="Swift build configuration (default release)",
+    )
+    app_build.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    app_build.set_defaults(func=_app_build)
+    app_open = app_sub.add_parser("open", help="open the native app, building it if needed")
+    app_open.add_argument("--output", help="directory containing ElasticUMA.app")
+    app_open.add_argument(
+        "--no-build",
+        action="store_true",
+        help="fail instead of building when the app is missing",
+    )
+    app_open.set_defaults(func=_app_open)
 
     model = subparsers.add_parser("model", help="manage the canonical model store")
     model_sub = model.add_subparsers(
@@ -583,6 +604,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="expert residency policy (default os-managed)",
     )
     run_once.add_argument("--seed", type=int, help="deterministic sampling seed")
+    run_once.add_argument(
+        "--diagnostics",
+        action="store_true",
+        help="emit detailed runtime phase diagnostics to stderr",
+    )
     run_once.add_argument("--dry-run", action="store_true", help="print the exact launch plan")
     run_once.set_defaults(func=_run)
 

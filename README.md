@@ -6,7 +6,13 @@ unified memory available to the rest of your Mac.**
 [Paper](paper/ElasticUMA-paper.pdf) ·
 [Quick start](docs/quickstart.md) ·
 [Supported models](docs/models.md) ·
-[CLI](docs/cli.md)
+[Mac app](docs/app.md) ·
+[CLI](docs/cli.md) ·
+[Python SDK](docs/sdk.md)
+
+![ElasticUMA running Qwen locally in the native Mac app](assets/elasticuma-mac-chat.png)
+
+*A real Qwen3.6-35B-A3B response generated locally by the release Mac app.*
 
 ## About
 
@@ -35,8 +41,8 @@ to remain physically present in unified memory.
   normal cache miss and is reloaded into the existing slot.
 - **Exact expert bytes.** Reclamation changes residency and latency, not model
   weights or routing semantics.
-- **A simple local interface.** Generate from the terminal or use the loopback
-  OpenAI- and Anthropic-compatible API.
+- **Simple local interfaces.** Use the native Mac app, one-command CLI,
+  reusable Python SDK, or loopback OpenAI/Anthropic-compatible API.
 - **One model copy.** Downloads and packing use one canonical cache with locks,
   duplicate-snapshot detection, resumable work, and a configurable disk reserve.
 
@@ -95,34 +101,66 @@ cd elasticuma
 ./install.sh
 ```
 
-Choose and install a supported model:
+Choose and install a supported model once. Every interface below reuses the
+same verified model in `~/Library/Caches/elasticuma/`.
 
 ```bash
 uv run euma models
 uv run euma setup qwen36
 ```
 
-Generate once:
+### Native Mac app
+
+```bash
+uv run euma app open
+```
+
+Use Chat for private local generation, Models for installed and live
+compatibility-checked Hugging Face results, and Developer for the local API.
+
+### CLI
 
 ```bash
 uv run euma run qwen36 "Explain unified memory in simple language."
 ```
 
-Or start the local API:
+### Python SDK
+
+```python
+from elasticuma import ElasticUMA
+
+client = ElasticUMA()
+result = client.generate("qwen36", "Explain unified memory simply.")
+print(result.text)
+```
+
+The SDK also exposes model discovery, download planning, safe one-copy setup,
+managed server lifetimes, runtime status, and Mac app packaging. See the
+[Python SDK guide](docs/sdk.md).
+
+### OpenAI or Anthropic API
+
+The same loopback server accepts both request formats:
 
 ```bash
 uv run euma serve qwen36
 ```
 
-The API listens only on `127.0.0.1:8080`. See the
-[quick start](docs/quickstart.md) for an OpenAI-compatible request example.
+The API listens only on `127.0.0.1:8080`; use `/v1/chat/completions` for
+OpenAI clients or `/v1/messages` for Anthropic clients. See the
+[quick start](docs/quickstart.md) for both examples.
 
 ## Supported models
 
-| ID | Model | Current status |
-|---|---|---|
-| `qwen36` | Qwen3.6-35B-A3B Q4 | Verified on M1 Max / 32 GiB |
-| `gemma4` | Gemma 4 26B-A4B Q4 | Verified on M1 Max / 32 GiB |
+| ID | Model | ElasticUMA inputs | Current status |
+|---|---|---|---|
+| `qwen36` | Qwen3.6-35B-A3B Q4 | Text | Verified on M1 Max / 32 GiB |
+| `gemma4` | Gemma 4 26B-A4B Q4 | Text | Verified on M1 Max / 32 GiB |
+
+Input support is model-profile-specific and means end-to-end support in
+ElasticUMA—not every modality found in the upstream checkpoint. Both current
+profiles intentionally omit their vision towers, so the app does not advertise
+image input for them.
 
 A completed, verified `.gturbo` model can also be passed directly when its
 architecture is already implemented:
@@ -139,8 +177,10 @@ Gemma, gpt-oss, and Mixtral models.
 
 - [Install](docs/install.md)
 - [Quick start](docs/quickstart.md)
+- [Native Mac app](docs/app.md)
 - [Models and architecture matrix](docs/models.md)
 - [CLI reference](docs/cli.md)
+- [Python SDK](docs/sdk.md)
 - [Native runtime](runtime/README.md)
 - [Research paper](paper/ElasticUMA-paper.pdf)
 
@@ -151,17 +191,6 @@ two MoE architectures, batch-one text generation, and controlled short-context
 workloads. It does not yet establish results across all Apple generations,
 arbitrary MoE checkpoints, long-context concurrency, multimodal input, or
 independent operators.
-
-## Citation
-
-```bibtex
-@article{prajapati2026elasticuma,
-  title  = {ElasticUMA: Reload-Correct OS-Managed Expert Caching for Apple Silicon},
-  author = {Prajapati, Naresh},
-  year   = {2026},
-  note   = {Author preprint}
-}
-```
 
 ## License
 

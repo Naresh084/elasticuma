@@ -9,17 +9,24 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .catalog import ModelProfile, project_catalog_paths, resolve_profile
+from .model_store import cache_root
+from .runtime_provenance import (
+    APP_PATCH_SHA256,
+    MECHANISM_PATCH_SHA256,
+    RUNTIME_PATCHSET_SHA256,
+    UPSTREAM_RUNTIME_REVISION,
+    runtime_bootstrap_path,
+    runtime_patch_paths,
+)
 from .runtime_store import packed_model_path
 from .util import sha256_file
 
 ALLOWED_CACHE_SLOTS = (8, 16, 24, 32, 48, 64, 96, 128, 192, 256)
 ALLOWED_CONTEXT_TOKENS = (4096, 8192, 16384, 32768, 65536)
 MODEL_PROCESS_PATTERN = (
-    "slipstream-server|slipstream-mac|slipstream-decode-service|"
-    "TurboFieldfareServer|TurboFieldfareMac|TurboFieldfareDecodeService"
+    "slipstream-server|slipstream-decode-service|TurboFieldfareServer|TurboFieldfareDecodeService"
 )
-RUNTIME_PATCH_SHA256 = "9db7cbc8ce330068f292174e06834af43bf1607091a538d3dbad9f3eba4e1733"
-UPSTREAM_RUNTIME_REVISION = "01f7d5e774ca940982ea3aa012bd880b5c9d634e"
+RUNTIME_PATCH_SHA256 = RUNTIME_PATCHSET_SHA256
 
 
 @dataclass(frozen=True)
@@ -53,8 +60,9 @@ class LaunchPlan:
 
 
 def runtime_root(project_root: Path) -> Path:
+    del project_root
     configured = os.environ.get("ELASTICUMA_RUNTIME_ROOT")
-    return Path(configured).expanduser() if configured else project_root / ".runtime/elasticuma"
+    return Path(configured).expanduser() if configured else cache_root() / "runtime"
 
 
 def runtime_status(project_root: Path) -> dict[str, object]:
@@ -64,9 +72,20 @@ def runtime_status(project_root: Path) -> dict[str, object]:
         "repacker": release / "slipstream-repack",
         "cli": release / "slipstream",
         "server": release / "slipstream-server",
+        "app": release / "slipstream-mac",
+        "decode_service": release / "slipstream-decode-service",
     }
-    patch = project_root / "runtime/patches/elasticuma-purgeable.patch"
-    patch_sha = sha256_file(patch) if patch.is_file() else None
+    patch_paths = runtime_patch_paths(project_root)
+    expected_patch_hashes = {
+        "mechanism": MECHANISM_PATCH_SHA256,
+        "app": APP_PATCH_SHA256,
+    }
+    patch_hashes = {
+        name: sha256_file(path) if path.is_file() else None for name, path in patch_paths.items()
+    }
+    patches_valid = all(
+        patch_hashes[name] == expected for name, expected in expected_patch_hashes.items()
+    )
     staged_patch_sha = None
     runtime_head = None
     source_clean = False
@@ -114,26 +133,36 @@ def runtime_status(project_root: Path) -> dict[str, object]:
         "upstream_revision": UPSTREAM_RUNTIME_REVISION,
         "runtime_head": runtime_head,
         "source_clean": source_clean,
-        "patch_path": str(patch),
-        "patch_sha256": patch_sha,
-        "patch_valid": patch_sha == RUNTIME_PATCH_SHA256,
+        "patch_path": str(patch_paths["mechanism"]),
+        "patch_sha256": patch_hashes["mechanism"],
+        "patch_valid": patches_valid,
+        "patches": {
+            name: {
+                "path": str(patch_paths[name]),
+                "sha256": patch_hashes[name],
+                "expected_sha256": expected_patch_hashes[name],
+                "valid": patch_hashes[name] == expected_patch_hashes[name],
+            }
+            for name in patch_paths
+        },
+        "runtime_patchset_sha256": RUNTIME_PATCHSET_SHA256,
         "staged_patch_sha256": staged_patch_sha,
-        "staged_patch_valid": staged_patch_sha == RUNTIME_PATCH_SHA256,
+        "staged_patch_valid": staged_patch_sha == RUNTIME_PATCHSET_SHA256,
         "binaries": {
             name: {"path": str(path), "ready": path.is_file() and os.access(path, os.X_OK)}
             for name, path in binaries.items()
         },
         "ready": (
             binaries_ready
-            and patch_sha == RUNTIME_PATCH_SHA256
-            and staged_patch_sha == RUNTIME_PATCH_SHA256
+            and patches_valid
+            and staged_patch_sha == RUNTIME_PATCHSET_SHA256
             and source_clean
         ),
     }
 
 
 def install_runtime(project_root: Path) -> dict[str, object]:
-    script = project_root / "scripts/bootstrap_candidate_runtime.sh"
+    script = runtime_bootstrap_path(project_root)
     if not script.is_file():
         raise RuntimeError(
             "runtime installation is available from a source checkout; "
@@ -272,7 +301,7 @@ def serve_plan(
         "--expert-cache-hot-slots",
         str(hot),
     )
-    environment = {"TURBO_FIELDFARE_PHASES": "1"}
+    environment: dict[str, str] = {}
     return LaunchPlan("serve", binary, model, command, environment)
 
 
@@ -287,6 +316,7 @@ def run_plan(
     hot_slots: int | None = None,
     residency: str = "os-managed",
     seed: int | None = None,
+    diagnostics: bool = False,
     extra_catalogs: Iterable[Path] = (),
 ) -> LaunchPlan:
     if not prompt:
@@ -315,7 +345,7 @@ def run_plan(
         str(binary),
         "--model",
         str(model.path),
-        "--prompt",
+        "--chat-prompt",
         prompt,
         "--max-new",
         str(max_new),
@@ -334,7 +364,7 @@ def run_plan(
         if seed < 0:
             raise ValueError("seed must be non-negative")
         command.extend(("--seed", str(seed)))
-    environment = {"TURBO_FIELDFARE_PHASES": "1"}
+    environment = {"TURBO_FIELDFARE_PHASES": "1"} if diagnostics else {}
     return LaunchPlan("run", binary, model, tuple(command), environment)
 
 

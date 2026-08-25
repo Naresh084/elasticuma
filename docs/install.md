@@ -21,14 +21,21 @@ cd elasticuma
 ```
 
 `install.sh` runs `uv sync --locked`, clones the pinned native runtime under the
-ignored `.runtime/` directory, verifies the ElasticUMA patch, and builds the
-release CLI and server. Rerunning it reuses the verified checkout.
+canonical ElasticUMA cache, verifies both runtime patches and their combined
+staged diff, and builds the CLI, server, decode service, and Mac app. Rerunning
+it reuses the verified checkout.
 
 Check readiness:
 
 ```bash
 uv run euma doctor
 uv run euma models
+```
+
+Open the native app:
+
+```bash
+uv run euma app open
 ```
 
 ## Install a model
