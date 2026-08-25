@@ -14,7 +14,3 @@ The runtime bootstrap verifies a pinned upstream commit and the complete staged
 patch hash. It refuses extra source changes rather than building an ambiguous
 runtime. Review community model profiles as untrusted configuration even though
 the schema rejects unknown fields and mutable revisions.
-
-Pressure experiments can affect desktop responsiveness. They are disabled by
-default, bounded, and monitored. Do not bypass the safety guards in unattended
-runs.

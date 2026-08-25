@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from dataclasses import asdict
@@ -14,7 +15,6 @@ from .catalog import load_profiles, resolve_profile
 from .config import load_experiment
 from .macos import memory_snapshot, power_snapshot, safe_public_hardware_dict
 from .model_store import cache_root, fetch, list_registered, preflight
-from .native_pressure import monitor_binary
 from .pressure import run_pressure_worker, validate_pressure_request
 from .runner import run_experiment
 from .runtime_store import (
@@ -48,10 +48,7 @@ def _emit(value: Any, *, as_json: bool = True) -> None:
 
 
 def _doctor(_args: argparse.Namespace) -> int:
-    tools = {
-        name: shutil.which(name)
-        for name in ("git", "swift", "xcodebuild", "python3", "uv", "jq", "rg")
-    }
+    tools = {name: shutil.which(name) for name in ("git", "swift", "xcodebuild", "python3", "uv")}
     runtime = runtime_status(PROJECT_ROOT)
     build_ready = all(tools[name] for name in ("git", "swift", "xcodebuild"))
     payload = {
@@ -63,12 +60,9 @@ def _doctor(_args: argparse.Namespace) -> int:
         "cache_root": str(cache_root()),
         "registered_models": list_registered(PROJECT_ROOT),
         "tools": tools,
-        "native_pressure_monitor": str(monitor_binary(PROJECT_ROOT)),
-        "native_pressure_monitor_ready": monitor_binary(PROJECT_ROOT).is_file(),
         "runtime": runtime,
         "ready_for_runtime_build": build_ready,
         "serve_ready": runtime["ready"],
-        "research_ready": all(tools.values()) and monitor_binary(PROJECT_ROOT).is_file(),
         "ready": runtime["ready"],
     }
     _emit(payload)
@@ -118,9 +112,129 @@ def _model_catalog(args: argparse.Namespace) -> int:
     return 0
 
 
+def _models(args: argparse.Namespace) -> int:
+    paths = catalog_paths(PROJECT_ROOT, _extra_catalogs(args))
+    rows = []
+    for profile in load_profiles(paths):
+        model_path = packed_model_path(profile)
+        installed = (
+            model_path.is_dir()
+            and (model_path / "manifest.json").is_file()
+            and (model_path / "verified-install.json").is_file()
+            and (model_path / "model_weights.bin").is_file()
+        )
+        rows.append(
+            {
+                "id": profile.id,
+                "model": profile.display_name,
+                "support": "verified" if profile.verification == "admitted" else "community",
+                "installed": installed,
+                "minimum_ram_gib": profile.minimum_ram_gib,
+                "repo_id": profile.repo_id,
+            }
+        )
+    if args.json:
+        _emit(rows)
+        return 0
+    widths = {
+        "id": max(2, *(len(str(row["id"])) for row in rows)),
+        "model": max(5, *(len(str(row["model"])) for row in rows)),
+    }
+    print(f"{'ID':<{widths['id']}}  {'MODEL':<{widths['model']}}  SUPPORT   INSTALLED  MEMORY")
+    for row in rows:
+        print(
+            f"{row['id']:<{widths['id']}}  {row['model']:<{widths['model']}}  "
+            f"{row['support']:<9} {('yes' if row['installed'] else 'no'):<10} "
+            f"{row['minimum_ram_gib']} GiB+"
+        )
+    print("\nA verified .gturbo path can also be passed directly to `euma run` or `euma serve`.")
+    return 0
+
+
+def _one_reference(args: argparse.Namespace, positional: str, option: str) -> str:
+    values = [
+        value for value in (getattr(args, positional, None), getattr(args, option, None)) if value
+    ]
+    if len(values) != 1:
+        raise ValueError("provide one model as a positional argument or with --model")
+    return str(values[0])
+
+
+def _profile_reference(args: argparse.Namespace) -> str:
+    return _one_reference(args, "model_ref", "profile_option")
+
+
+def _confirm_model_install(profile_name: str, size_gib: float) -> None:
+    if not sys.stdin.isatty():
+        raise RuntimeError("model installation needs confirmation; rerun with --yes")
+    answer = input(
+        f"Install {profile_name} ({size_gib:.1f} GiB published source) into the "
+        "canonical cache? [y/N] "
+    )
+    if answer.strip().lower() not in {"y", "yes"}:
+        raise RuntimeError("model installation cancelled")
+
+
+def _setup(args: argparse.Namespace) -> int:
+    profile = resolve_profile(
+        args.model,
+        extra_catalogs=catalog_paths(PROJECT_ROOT, _extra_catalogs(args)),
+    )
+    status = runtime_status(PROJECT_ROOT)
+    if args.dry_run and status["ready"] is not True:
+        payload = {
+            "runtime_action": "install",
+            "model": profile.public_dict(),
+            "model_action": "preflight after runtime installation",
+        }
+        if args.json:
+            _emit(payload)
+        else:
+            print("Setup plan")
+            print("  Runtime: build the pinned Swift/Metal runtime")
+            print(f"  Model:   {profile.display_name} ({profile.id})")
+            print("  Storage: run safety and duplicate-copy checks after the runtime build")
+        return 0
+    if status["ready"] is not True:
+        status = install_runtime(PROJECT_ROOT)
+    plan = packed_preflight(Path(args.runtime_root), profile)
+    if args.dry_run:
+        if args.json:
+            _emit({"runtime": status, "model": profile.public_dict(), "preflight": plan})
+        else:
+            print("Setup plan")
+            print("  Runtime: ready")
+            print(f"  Model:   {profile.display_name} ({profile.id})")
+            print(f"  Source:  {plan['source_published_gib']:.1f} GiB published")
+            print(f"  Target:  {plan['model_path']}")
+            print(f"  Allowed: {'yes' if plan['allowed'] else 'no'}")
+            for reason in plan["reasons"]:
+                print(f"  Blocker: {reason}")
+        return 0 if plan["allowed"] else 2
+    if not plan["allowed"]:
+        if args.json:
+            _emit({"runtime": status, "model": profile.public_dict(), "preflight": plan})
+        else:
+            print(f"Setup refused for {profile.display_name}:", file=sys.stderr)
+            for reason in plan["reasons"]:
+                print(f"  - {reason}", file=sys.stderr)
+        return 2
+    if not plan["verified_existing"] and not args.yes:
+        _confirm_model_install(profile.display_name, float(plan["source_published_gib"]))
+    installed = install_packed_model(PROJECT_ROOT, Path(args.runtime_root), profile)
+    if args.json:
+        _emit({"runtime": status, "model": profile.public_dict(), "installed": installed})
+    else:
+        print(f"Ready: {profile.display_name}")
+        print(f"Model: {installed['model_path']}")
+        print(f'Run:   uv run euma run {profile.id} "Hello"')
+        print(f"Serve: uv run euma serve {profile.id}")
+    return 0
+
+
 def _model_profile_preflight(args: argparse.Namespace) -> int:
     profile = resolve_profile(
-        args.profile,
+        _profile_reference(args),
         extra_catalogs=catalog_paths(PROJECT_ROOT, _extra_catalogs(args)),
     )
     plan = packed_preflight(Path(args.runtime_root), profile)
@@ -130,7 +244,7 @@ def _model_profile_preflight(args: argparse.Namespace) -> int:
 
 def _model_profile_install(args: argparse.Namespace) -> int:
     profile = resolve_profile(
-        args.profile,
+        _profile_reference(args),
         extra_catalogs=catalog_paths(PROJECT_ROOT, _extra_catalogs(args)),
     )
     _emit(install_packed_model(PROJECT_ROOT, Path(args.runtime_root), profile))
@@ -151,7 +265,7 @@ def _runtime_install(_args: argparse.Namespace) -> int:
 def _serve(args: argparse.Namespace) -> int:
     plan = serve_plan(
         PROJECT_ROOT,
-        args.model,
+        _one_reference(args, "model_ref", "model_option"),
         port=args.port,
         max_context=args.max_context,
         queue_limit=args.queue_limit,
@@ -169,10 +283,13 @@ def _serve(args: argparse.Namespace) -> int:
 
 
 def _run(args: argparse.Namespace) -> int:
+    prompt_values = [value for value in (args.prompt_text, args.prompt_option) if value]
+    if len(prompt_values) != 1:
+        raise ValueError("provide one prompt as a positional argument or with --prompt")
     plan = run_plan(
         PROJECT_ROOT,
-        args.model,
-        args.prompt,
+        _one_reference(args, "model_ref", "model_option"),
+        prompt_values[0],
         max_new=args.max_new,
         max_context=args.max_context,
         cache_slots=args.cache_slots,
@@ -292,14 +409,90 @@ def _experiment_analyze_purgeable(args: argparse.Namespace) -> int:
     return 0
 
 
+def _add_research_model_commands(model_sub: Any) -> None:
+    for name, function in (("hf-preflight", _model_preflight), ("hf-fetch", _model_fetch)):
+        command = model_sub.add_parser(name)
+        command.add_argument("--repo", required=True)
+        command.add_argument("--revision", required=True)
+        command.set_defaults(func=function)
+    packed_check = model_sub.add_parser("packed-preflight")
+    packed_check.add_argument("--runtime-root", default=str(runtime_root(PROJECT_ROOT)))
+    packed_check.set_defaults(func=_packed_preflight)
+    packed_install = model_sub.add_parser("install-qwen36")
+    packed_install.add_argument("--runtime-root", default=str(runtime_root(PROJECT_ROOT)))
+    packed_install.set_defaults(func=_packed_install)
+    gemma_check = model_sub.add_parser("gemma4-packed-preflight")
+    gemma_check.add_argument("--runtime-root", default=str(runtime_root(PROJECT_ROOT)))
+    gemma_check.set_defaults(func=_packed_gemma4_preflight)
+    gemma_install = model_sub.add_parser("install-gemma4")
+    gemma_install.add_argument("--runtime-root", default=str(runtime_root(PROJECT_ROOT)))
+    gemma_install.set_defaults(func=_packed_gemma4_install)
+
+
+def _add_research_commands(subparsers: Any) -> None:
+    pressure = subparsers.add_parser("pressure")
+    pressure.add_argument("--mib", type=int, required=True)
+    pressure.set_defaults(func=_pressure_check)
+
+    worker = subparsers.add_parser("_pressure-worker")
+    worker.add_argument("--mib", type=int, required=True)
+    worker.add_argument("--ready", required=True)
+    worker.add_argument("--receipt", required=True)
+    worker.set_defaults(func=_pressure_worker)
+
+    experiment = subparsers.add_parser("experiment")
+    experiment_sub = experiment.add_subparsers(dest="experiment_command", required=True)
+    validate = experiment_sub.add_parser("validate-config")
+    validate.add_argument("--config", required=True)
+    validate.set_defaults(func=_experiment_validate)
+    run = experiment_sub.add_parser("run")
+    run.add_argument("--config", required=True)
+    run.set_defaults(func=_experiment_run)
+    analyze = experiment_sub.add_parser("analyze")
+    analyze.add_argument("--input", required=True)
+    analyze.set_defaults(func=_experiment_analyze)
+    purgeable = experiment_sub.add_parser("analyze-purgeable")
+    purgeable.add_argument("--input", required=True)
+    purgeable.add_argument("--candidate", required=True)
+    purgeable.add_argument("--baseline", action="append", required=True)
+    purgeable.add_argument("--output")
+    purgeable.set_defaults(func=_experiment_analyze_purgeable)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="elasticuma")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(
         dest="command",
         required=True,
-        metavar="{doctor,runtime,model,serve,run,pressure,experiment}",
+        metavar="{setup,models,run,serve,doctor,runtime,model}",
     )
+
+    setup = subparsers.add_parser("setup", help="build the runtime and safely install one model")
+    setup.add_argument("model", help="model id, alias, or supported Hugging Face repo id")
+    setup.add_argument("--catalog", action="append", default=[], help="additional catalog JSON")
+    setup.add_argument(
+        "--yes",
+        action="store_true",
+        help="confirm model installation non-interactively",
+    )
+    setup.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="show the setup plan without installing",
+    )
+    setup.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    setup.add_argument(
+        "--runtime-root",
+        default=str(runtime_root(PROJECT_ROOT)),
+        help=argparse.SUPPRESS,
+    )
+    setup.set_defaults(func=_setup)
+
+    models = subparsers.add_parser("models", help="show supported models and local readiness")
+    models.add_argument("--catalog", action="append", default=[], help="additional catalog JSON")
+    models.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    models.set_defaults(func=_models)
 
     doctor = subparsers.add_parser("doctor", help="emit privacy-safe hardware and tool readiness")
     doctor.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
@@ -322,7 +515,8 @@ def build_parser() -> argparse.ArgumentParser:
     catalog.add_argument("--catalog", action="append", default=[])
     catalog.set_defaults(func=_model_catalog)
     profile_check = model_sub.add_parser("preflight", help="safety-check a model installation")
-    profile_check.add_argument("--profile", required=True)
+    profile_check.add_argument("model_ref", nargs="?", help="model id, alias, or repo id")
+    profile_check.add_argument("--profile", dest="profile_option", help=argparse.SUPPRESS)
     profile_check.add_argument("--catalog", action="append", default=[])
     profile_check.add_argument(
         "--runtime-root",
@@ -330,47 +524,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     profile_check.set_defaults(func=_model_profile_preflight)
     profile_install = model_sub.add_parser("install", help="install one catalog model once")
-    profile_install.add_argument("--profile", required=True)
+    profile_install.add_argument("model_ref", nargs="?", help="model id, alias, or repo id")
+    profile_install.add_argument("--profile", dest="profile_option", help=argparse.SUPPRESS)
     profile_install.add_argument("--catalog", action="append", default=[])
     profile_install.add_argument(
         "--runtime-root",
         default=str(runtime_root(PROJECT_ROOT)),
     )
     profile_install.set_defaults(func=_model_profile_install)
-    for name, function in (("hf-preflight", _model_preflight), ("hf-fetch", _model_fetch)):
-        command = model_sub.add_parser(name)
-        command.add_argument("--repo", required=True)
-        command.add_argument("--revision", required=True)
-        command.set_defaults(func=function)
     model_list = model_sub.add_parser("list", help="show registered local model receipts")
     model_list.set_defaults(func=_model_list)
-    packed_check = model_sub.add_parser("packed-preflight")
-    packed_check.add_argument(
-        "--runtime-root",
-        default=str(runtime_root(PROJECT_ROOT)),
-    )
-    packed_check.set_defaults(func=_packed_preflight)
-    packed_install = model_sub.add_parser("install-qwen36")
-    packed_install.add_argument(
-        "--runtime-root",
-        default=str(runtime_root(PROJECT_ROOT)),
-    )
-    packed_install.set_defaults(func=_packed_install)
-    gemma_check = model_sub.add_parser("gemma4-packed-preflight")
-    gemma_check.add_argument(
-        "--runtime-root",
-        default=str(runtime_root(PROJECT_ROOT)),
-    )
-    gemma_check.set_defaults(func=_packed_gemma4_preflight)
-    gemma_install = model_sub.add_parser("install-gemma4")
-    gemma_install.add_argument(
-        "--runtime-root",
-        default=str(runtime_root(PROJECT_ROOT)),
-    )
-    gemma_install.set_defaults(func=_packed_gemma4_install)
+    if os.environ.get("ELASTICUMA_RESEARCH_COMMANDS") == "1":
+        _add_research_model_commands(model_sub)
 
     serve = subparsers.add_parser("serve", help="start the loopback OpenAI/Anthropic API")
-    serve.add_argument("--model", required=True, help="catalog profile or verified .gturbo path")
+    serve.add_argument("model_ref", nargs="?", help="model id, repo id, or verified .gturbo path")
+    serve.add_argument("--model", dest="model_option", help=argparse.SUPPRESS)
     serve.add_argument("--catalog", action="append", default=[], help="additional catalog JSON")
     serve.add_argument("--port", type=int, default=8080, help="loopback port (default 8080)")
     serve.add_argument("--model-id", help="API model id (default profile/manifest id)")
@@ -392,8 +561,14 @@ def build_parser() -> argparse.ArgumentParser:
     serve.set_defaults(func=_serve)
 
     run_once = subparsers.add_parser("run", help="generate once from a catalog model or path")
-    run_once.add_argument("--model", required=True, help="catalog profile or verified .gturbo path")
-    run_once.add_argument("--prompt", required=True, help="raw generation prompt")
+    run_once.add_argument(
+        "model_ref",
+        nargs="?",
+        help="model id, repo id, or verified .gturbo path",
+    )
+    run_once.add_argument("prompt_text", nargs="?", help="generation prompt")
+    run_once.add_argument("--model", dest="model_option", help=argparse.SUPPRESS)
+    run_once.add_argument("--prompt", dest="prompt_option", help=argparse.SUPPRESS)
     run_once.add_argument("--catalog", action="append", default=[], help="additional catalog JSON")
     run_once.add_argument("--max-new", type=int, default=256, help="token limit (default 256)")
     run_once.add_argument(
@@ -411,35 +586,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_once.add_argument("--dry-run", action="store_true", help="print the exact launch plan")
     run_once.set_defaults(func=_run)
 
-    pressure = subparsers.add_parser("pressure", help="validate a bounded live-pressure request")
-    pressure.add_argument("--mib", type=int, required=True)
-    pressure.set_defaults(func=_pressure_check)
-
-    worker = subparsers.add_parser("_pressure-worker")
-    worker.add_argument("--mib", type=int, required=True)
-    worker.add_argument("--ready", required=True)
-    worker.add_argument("--receipt", required=True)
-    worker.set_defaults(func=_pressure_worker)
-
-    experiment = subparsers.add_parser(
-        "experiment", help="run or analyze immutable research protocols"
-    )
-    experiment_sub = experiment.add_subparsers(dest="experiment_command", required=True)
-    validate = experiment_sub.add_parser("validate-config")
-    validate.add_argument("--config", required=True)
-    validate.set_defaults(func=_experiment_validate)
-    run = experiment_sub.add_parser("run")
-    run.add_argument("--config", required=True)
-    run.set_defaults(func=_experiment_run)
-    analyze = experiment_sub.add_parser("analyze")
-    analyze.add_argument("--input", required=True)
-    analyze.set_defaults(func=_experiment_analyze)
-    purgeable = experiment_sub.add_parser("analyze-purgeable")
-    purgeable.add_argument("--input", required=True)
-    purgeable.add_argument("--candidate", required=True)
-    purgeable.add_argument("--baseline", action="append", required=True)
-    purgeable.add_argument("--output")
-    purgeable.set_defaults(func=_experiment_analyze_purgeable)
+    if os.environ.get("ELASTICUMA_RESEARCH_COMMANDS") == "1":
+        _add_research_commands(subparsers)
     return parser
 
 

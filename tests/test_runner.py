@@ -9,6 +9,7 @@ from elasticuma.config import load_experiment
 from elasticuma.schema import MemorySnapshot
 
 ROOT = Path(__file__).resolve().parents[1]
+GATE1_FIXTURE = ROOT / "tests/fixtures/research/gate1.toml"
 
 
 class _FakeProcess:
@@ -46,7 +47,7 @@ def test_terminate_escalates_entire_session(monkeypatch) -> None:
 
 
 def test_recovery_gate_requires_consecutive_normal_samples(monkeypatch) -> None:
-    spec = load_experiment(ROOT / "configs/gate1.v4.example.toml", ROOT)
+    spec = load_experiment(GATE1_FIXTURE, ROOT)
     snapshot = MemorySnapshot(
         captured_at="now",
         monotonic_seconds=1,

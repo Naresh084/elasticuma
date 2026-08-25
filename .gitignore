@@ -9,24 +9,41 @@ __pycache__/
 dist/
 build/
 
-# Large or machine-local research state.
+# Generated runtime and model state.
 .models/
 .runtime/
 .locks/
-artifacts/raw/**
-artifacts/admitted/**
-artifacts/figures/**
-artifacts/releases/**
-!artifacts/raw/.gitkeep
-!artifacts/admitted/.gitkeep
-!artifacts/figures/.gitkeep
-!artifacts/releases/elasticuma-paper-v1.tar.gz
-paper/build/
-paper/latex/build/
-native/.build/
+
+# Local research workspace. These files are retained on development machines
+# but are intentionally absent from the end-user repository.
+/AGENTS.md
+/artifacts/
+/configs/
+/reports/
+/native/
+/runtime/docs/
+
+# Keep only the small public documentation surface in Git.
+/docs/*
+!/docs/cli.md
+!/docs/install.md
+!/docs/models.md
+!/docs/quickstart.md
+
+# Keep the final paper and its buildable LaTeX source; local ledgers and
+# duplicate render assets remain ignored.
+/paper/*
+!/paper/ElasticUMA-paper.pdf
+!/paper/README.md
+!/paper/latex/
+!/paper/latex/**
+/paper/latex/build/
+
+# Only the end-user runtime bootstrap belongs in the public scripts directory.
+/scripts/*
+!/scripts/bootstrap_candidate_runtime.sh
 
 # Secrets and local overrides.
 .env
 .env.*
 !.env.example
-configs/local*.toml

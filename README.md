@@ -1,195 +1,170 @@
 # ElasticUMA
 
-**Run routed-expert language models on Apple Silicon with a large logical cache
-whose cold pages macOS can reclaim safely.**
+**Run larger Mixture-of-Experts models on Apple Silicon without forcing every
+cached expert to stay in memory.**
 
 [Paper](paper/ElasticUMA-paper.pdf) ·
 [Quick start](docs/quickstart.md) ·
-[Supported models](docs/models.md) ·
-[CLI](docs/cli.md) ·
-[Publish on GitHub](docs/publishing.md)
+[Models](docs/models.md) ·
+[CLI](docs/cli.md)
 
-![ElasticUMA OS-managed expert residency with exact recovery](paper/figures/elasticuma-architecture.png)
+![How ElasticUMA lets macOS reclaim cold expert pages](assets/elasticuma-architecture.png)
 
-ElasticUMA is an Apple-Silicon inference runtime and reproducible research
-artifact for Mixture-of-Experts (MoE) models. It keeps frequently used expert
-slots resident, marks cold Metal buffers purgeable at GPU-safe boundaries, and
-validates every potential cache hit before reuse. If macOS reclaimed a cold
-slot, ElasticUMA converts it to a normal miss and reloads the exact expert bytes
-before the GPU can bind them.
+## What problem does it solve?
 
-The result is physical elasticity inside Apple unified memory: one logical
-96-slot cache can preserve most large-cache locality without insisting that all
-cold pages remain resident.
+An MoE model may contain hundreds of experts while using only a few for each
+token. A small cache repeatedly reads experts from storage. A large fixed cache
+avoids those reads, but on a Mac it also competes with applications, the file
+cache, graphics, compression, and swap because the CPU and GPU share one memory
+pool.
 
-## Highlights
+ElasticUMA keeps the useful identity and reuse history of a large expert cache,
+but lets macOS reclaim cold cache pages when the machine needs memory. Before a
+cold expert is used again, ElasticUMA checks whether its bytes survived. If not,
+it reloads the exact expert before the GPU can see it.
 
-- **Native Apple runtime.** Swift and Metal execution with no Python in the
-  per-token hot path.
-- **Reload-correct OS-managed residency.** Cold expert pages are reclaimable;
-  `.empty` is never treated as a hit.
-- **Simple public interface.** `elasticuma run` for one-shot generation and
-  `elasticuma serve` for loopback OpenAI- and Anthropic-compatible APIs.
-- **One canonical model store.** Pinned revisions, one download lock, resumable
-  streaming repack, duplicate-snapshot detection, and a 100 GiB default disk
-  reserve.
-- **Extensible model catalog.** Add a versioned JSON profile for another model
-  already supported by the native `.gturbo` runtime; direct verified `.gturbo`
-  paths need no Python catalog entry.
-- **Evidence included.** The paper, figures, exact runtime patch, negative
-  results, and a redacted 75-row core evidence bundle are tracked in Git.
+In plain language: **keep the large cache map, but stop treating every cold page
+as untouchable RAM.**
 
-## Measured scope
+## What did it achieve?
 
-These are admitted measurements on one M1 Max with 32 GiB RAM, not an all-Mac
-performance promise.
+These are validated measurements from one M1 Max with 32 GiB unified memory.
+They are not promises for every Mac or model.
 
-| Model and protocol | Gain vs fixed-16 | Gain vs fixed-96 | Fixed-96 footprint reduction |
+| Model and test | Gain vs small fixed cache | Gain vs large fixed cache | Lower memory use than large fixed cache |
 |---|---:|---:|---:|
-| Qwen3.6, 4 GiB co-tenant | +7.25% | +13.67% | 31.64% |
-| Qwen3.6, no synthetic pressure | +16.91% | +17.59% | 31.65% |
-| Gemma 4, no synthetic pressure | +45.30% | +26.01% | 35.26% |
+| Qwen3.6-35B-A3B Q4, 4 GiB co-tenant | 7.25% | 13.67% | 31.64% |
+| Qwen3.6-35B-A3B Q4, normal desktop state | 16.91% | 17.59% | 31.65% |
+| Gemma 4 26B-A4B Q4, normal desktop state | 45.30% | 26.01% | 35.26% |
 
-All 45 positive measured rows were admitted with identical output within each
-protocol and real empty-slot recovery. See [results](docs/RESULTS.md) for
-intervals, exact units, hashes, and limitations. Cross-generation, energy,
-long-context concurrency, and independent reproduction remain open.
+All 45 measured runs passed the safety checks, produced the same response within
+each test, and exercised real expert reloads. The paper contains the full method,
+intervals, negative results, and limitations.
 
-## Requirements
+## Get started
 
-- Apple-Silicon Mac (`arm64`)
-- macOS 26 or newer
-- Xcode 26 / Swift 6.2 or newer
-- Python 3.11+ and [uv](https://docs.astral.sh/uv/)
-- 32 GiB RAM for the two admitted profiles
-- Enough model storage while preserving the configured disk reserve
-
-No model weights or compiled runtime binaries are stored in this repository.
-
-## Getting started
+Requirements: an Apple-Silicon Mac, macOS 26+, Xcode 26 / Swift 6.2+, Python
+3.11+, Git, and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 git clone https://github.com/Naresh084/elasticuma.git
 cd elasticuma
-uv sync --extra dev
-
-# Clone pinned upstream source, verify and apply the bundled patch, then build.
-uv run elasticuma runtime install
-
-# Show supported profiles and whether their canonical model is already present.
-uv run elasticuma model catalog
-
-# Safety-check one transfer. This reuses an existing matching snapshot.
-uv run elasticuma model preflight --profile qwen36
-
-# Run only when preflight says allowed=true.
-uv run elasticuma model install --profile qwen36
-
-# One-shot generation with the admitted OS-managed defaults.
-uv run elasticuma run --model qwen36 --prompt "Explain unified memory in one paragraph."
+./install.sh
 ```
 
-Start the local API server:
+See the short model list:
 
 ```bash
-uv run elasticuma serve --model qwen36
+uv run euma models
 ```
 
-Then send an OpenAI-compatible request:
+Install one supported model. This performs disk and duplicate-download checks
+before asking for confirmation:
 
 ```bash
-curl http://127.0.0.1:8080/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "model": "qwen36",
-    "messages": [{"role": "user", "content": "What is an MoE model?"}],
-    "max_tokens": 512,
-    "stream": true
-  }'
+uv run euma setup qwen36
 ```
 
-The server is intentionally loopback-only. See the complete
-[installation](docs/install.md) and [quick-start](docs/quickstart.md) guides.
-
-## Model compatibility
-
-Built-in, evidence-admitted profiles:
-
-- `qwen36` — Qwen3.6-35B-A3B Q4
-- `gemma4` — Gemma 4 26B-A4B Q4
-
-ElasticUMA can also serve any completed, verified `.gturbo` directory that the
-pinned native runtime can parse:
+Generate once:
 
 ```bash
-uv run elasticuma serve --model /path/to/model.gturbo
+uv run euma run qwen36 "Explain unified memory in simple language."
 ```
 
-This is deliberately narrower than “any Hugging Face model.” A new checkpoint
-of an existing supported architecture may need only a catalog profile. A new
-architecture needs tokenizer, manifest/repacker, routing, tensor-layout, and
-kernel support in the native runtime plus model-specific tests. The contribution
-path is documented in [supported models](docs/models.md).
+Or start the local OpenAI- and Anthropic-compatible API:
 
-## Runtime provenance
-
-The public bootstrap reconstructs the implementation instead of relying on a
-private fork:
-
-1. clone `dwijenpatel/slipstream` at
-   `01f7d5e774ca940982ea3aa012bd880b5c9d634e`;
-2. verify `runtime/patches/elasticuma-purgeable.patch` at SHA-256
-   `dc0418cb83988d1679796af1d707dbdb03db8473fcff9c45e6ec52daee8dc850`;
-3. reconstruct measured code commit `ec84269d5ce162a0376099d39b30dd19aa99f096`
-   plus documentation-only public corrections in the patch;
-4. apply the patch to the Git index;
-5. reject any extra source change; and
-6. build the repacker, CLI, and API server in release mode.
-
-See [runtime details](runtime/README.md) and
-[mechanism documentation](runtime/docs/ELASTICUMA_PURGEABLE_CACHE.md).
-
-## Repository layout
-
-```text
-src/elasticuma/       public CLI, catalog, safety, telemetry, experiments
-runtime/              exact upstream patch and mechanism documentation
-models/               community profile schema and example
-examples/             dependency-free local API client
-docs/                 install, quick start, CLI, model support, research record
-paper/                PDF, Word, Markdown, and figures
-artifacts/releases/   redacted reproducibility bundle (no weights)
-configs/              immutable experiment protocols
-tests/                fast contract and safety tests
+```bash
+uv run euma serve qwen36
 ```
+
+The server listens only on `127.0.0.1:8080`. See the
+[quick start](docs/quickstart.md) for a request example.
+
+## Which models work?
+
+| ID | Model | Status |
+|---|---|---|
+| `qwen36` | Qwen3.6-35B-A3B Q4 | Verified on M1 Max / 32 GiB |
+| `gemma4` | Gemma 4 26B-A4B Q4 | Verified on M1 Max / 32 GiB |
+
+You can also pass a completed, verified `.gturbo` directory directly:
+
+```bash
+uv run euma serve /path/to/model.gturbo
+```
+
+### Why not claim every MoE model?
+
+“MoE” describes a routing idea, not one universal checkpoint format. Model
+families differ in tokenizer, tensor names, expert layout, quantization, shared
+experts, routing math, attention state, and GPU kernels. Loading an unknown
+layout can produce wrong output, not merely slower output.
+
+FreeToken handles this the same responsible way: it publishes known-good models
+whose architectures have matching kernels, rather than claiming arbitrary MoE
+compatibility. ElasticUMA currently has two native architecture paths. Adding a
+checkpoint of an existing path can be mostly metadata; adding a new architecture
+requires native implementation and correctness tests.
+
+The [model support page](docs/models.md) lists the architecture boundary and
+current popular models from Qwen, DeepSeek, GLM, Kimi, MiniMax, Mistral, and
+gpt-oss with an honest supported/not-supported status.
+
+## How it works
+
+1. Selected experts are read from one canonical model copy outside the
+   repository.
+2. Frequently reused expert slots remain resident; cold Metal-owned slots become
+   reclaimable at GPU-safe boundaries.
+3. Every possible reuse is validated. Reclaimed content becomes an ordinary
+   cache miss and is reloaded exactly.
+
+The inference path is Swift and Metal. Python provides the small installer,
+model registry, safety checks, and user-facing commands.
+
+## Storage safety
+
+ElasticUMA uses one canonical cache under
+`~/Library/Caches/elasticuma/`. It locks downloads, reuses a matching existing
+Hugging Face snapshot, supports resumable packing, and refuses a transfer that
+would violate the configured disk reserve. It does not store model weights in
+this repository.
+
+## Documentation
+
+- [Install](docs/install.md)
+- [Quick start](docs/quickstart.md)
+- [Supported models and architecture matrix](docs/models.md)
+- [CLI reference](docs/cli.md)
+- [Native runtime and exact patch](runtime/README.md)
+- [Research paper](paper/ElasticUMA-paper.pdf)
 
 ## Relationship to FreeToken
 
-[FreeToken](https://github.com/FlashML-org/FreeToken) is a major reference for
-edge-native MoE serving and for clear product onboarding. ElasticUMA adopts the
-same user-facing discipline—short commands, automatic defaults, explicit model
-support, local compatible APIs, and reproducible evaluation—but not its code or
-resource model. FreeToken targets heterogeneous CPU/CUDA/PCIe systems;
-ElasticUMA's contribution is reload-correct, OS-managed expert residency inside
-one Apple unified-memory pool. See [prior art](docs/PRIOR_ART.md).
+[FreeToken](https://github.com/FlashML-org/FreeToken) is the main inspiration
+for treating local inference as a whole-system problem and for keeping the
+public interface simple. FreeToken targets heterogeneous CPU, CUDA GPU, host
+memory, and PCIe resources. ElasticUMA studies a different mechanism for Apple
+unified memory: reload-correct OS reclamation of cold Metal expert pages. No
+FreeToken code is copied here.
 
-## Citation
+## Status and limits
+
+ElasticUMA is an early research runtime, not a universal model launcher. Current
+evidence covers one M1 Max, two MoE architectures, batch-one text generation,
+and short controlled workloads. Cross-generation results, energy, long-context
+concurrency, multimodal input, and independent reproduction remain open.
+
+## Citation and license
 
 ```bibtex
 @article{prajapati2026elasticuma,
-  title   = {ElasticUMA: Reload-Correct OS-Managed Expert Caching for Apple Silicon},
-  author  = {Prajapati, Naresh},
-  year    = {2026},
-  note    = {Author preprint}
+  title  = {ElasticUMA: Reload-Correct OS-Managed Expert Caching for Apple Silicon},
+  author = {Prajapati, Naresh},
+  year   = {2026},
+  note   = {Author preprint}
 }
 ```
 
-## Contributing and license
-
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a model-support or
-performance change. Every performance claim needs a pinned A/B protocol and raw
-receipts; AI-assisted work remains the human contributor's responsibility.
-
-ElasticUMA is Apache-2.0. The bundled patch modifies Apache-2.0 upstream source;
-model checkpoints retain their own licenses. See [NOTICE](NOTICE) and
-[third-party components](docs/THIRD_PARTY.md).
+ElasticUMA is Apache-2.0. Model checkpoints keep their own licenses and terms.
+See [NOTICE](NOTICE) for upstream attribution.

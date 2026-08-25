@@ -126,13 +126,14 @@
 \input{sections/conclusion}
 
 \section*{Artifact Availability}
-The source, exact upstream patch, experiment harness, admitted receipts, and
-analysis programs are available in the public repository linked on the first
-page. The tagged artifact archive includes internal SHA-256 checksums and the
-raw evidence used to derive every reported table and quantitative figure. Model
-weights, credentials, machine identifiers, and local paths are excluded. Model
-checkpoints must be obtained from their original publishers under their own
-licenses.
+The public repository linked on the first page contains the user-facing source,
+exact upstream patch, paper source, and analysis implementation. To keep that
+repository focused, raw and admitted experiment receipts are distributed as a
+separate companion release asset, \code{elasticuma-paper-v1.tar.gz}. The archive
+has internal SHA-256 checksums and contains the evidence used to derive every
+reported table and quantitative figure. Model weights, credentials, machine
+identifiers, and local paths are excluded. Model checkpoints must be obtained
+from their original publishers under their own licenses.
 
 \begin{center}
 \small
@@ -141,19 +142,17 @@ licenses.
 Artifact layer & Public location \\
 \midrule
 Runtime mechanism & \code{runtime/patches/} and \code{scripts/bootstrap\_candidate\_runtime.sh} \\
-Protocols and admission & \code{configs/}, \code{src/elasticuma/admission.py}, and \code{docs/METHODOLOGY.md} \\
-Measured evidence & \code{artifacts/releases/} with raw and admitted JSON receipts \\
-Analysis and figures & \code{scripts/}, \code{docs/RESULTS.md}, and \code{paper/figures/} \\
+User software & \code{src/elasticuma/}, \code{install.sh}, and the public documentation \\
+Measured evidence & Companion release asset \code{elasticuma-paper-v1.tar.gz} \\
+Analysis and figures & Evidence archive plus \code{paper/latex/figures/} \\
 Paper source & \code{paper/latex/}, including the bibliography and vector figures \\
 \bottomrule
 \end{tabularx}
 \end{center}
 
-The reconstruction sequence and hardware-reporting fields are documented in
-\code{docs/REPRODUCIBILITY.md}. The repository deliberately keeps negative
-results and failed alternatives in the same evidence lineage as admitted
-results; reproductions that disagree with the reported measurements should be
-retained rather than tuned away.
+The separate archive retains negative results and failed alternatives in the
+same evidence lineage as admitted results. Reproductions that disagree with the
+reported measurements should be retained rather than tuned away.
 
 \section*{Acknowledgments and Disclosure}
 The author thanks the maintainers of slipstream, MLX, llama.cpp, and FreeToken

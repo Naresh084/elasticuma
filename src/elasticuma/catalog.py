@@ -194,7 +194,7 @@ def resolve_profile(
     matches = [
         profile
         for profile in load_profiles(extra_catalogs)
-        if name == profile.id or name in profile.aliases
+        if name in {profile.id, profile.repo_id, profile.packed_model_id} or name in profile.aliases
     ]
     if len(matches) != 1:
         available = ", ".join(profile.id for profile in load_profiles(extra_catalogs))

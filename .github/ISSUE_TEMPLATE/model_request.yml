@@ -1,5 +1,5 @@
 name: Model support request
-description: Propose a checkpoint or architecture with exact provenance.
+description: Ask for a popular MoE checkpoint or architecture.
 title: "model: "
 labels: ["model-support"]
 body:
@@ -7,44 +7,43 @@ body:
     id: repository
     attributes:
       label: Checkpoint repository
-      placeholder: owner/name
+      description: Link the official Hugging Face model page.
+      placeholder: https://huggingface.co/owner/name
     validations:
       required: true
   - type: input
     id: revision
     attributes:
-      label: Immutable revision
-      description: Provide the exact 40-character commit, not main or latest.
-    validations:
-      required: true
+      label: Preferred checkpoint or quantization
+      description: For example BF16, FP8, MLX 4-bit, GGUF, MXFP4, or NVFP4.
   - type: textarea
     id: architecture
     attributes:
-      label: Architecture and routing
-      description: Layers, total/active/shared experts, attention or recurrent state, quantization, tokenizer, and license.
+      label: Why this model?
+      description: Explain the use case and why the model is practical on your Mac.
     validations:
       required: true
   - type: dropdown
     id: compatibility
     attributes:
-      label: Expected work
+      label: Current support expectation
       options:
-        - Existing native architecture, new checkpoint profile
-        - New native architecture implementation
+        - Existing Qwen or Gemma path may match
+        - New native architecture is required
         - Unknown
     validations:
       required: true
   - type: textarea
     id: evidence
     attributes:
-      label: Existing compatibility evidence
-      description: Commands, deterministic output comparison, hardware, and all observed failures or limits.
+      label: Target Mac
+      description: Chip, RAM, and available storage. Do not include a serial number or UUID.
   - type: checkboxes
     id: agreement
     attributes:
       label: Agreement
       options:
-        - label: I understand that a catalog JSON file alone does not make a new architecture supported.
+        - label: I checked the architecture matrix in docs/models.md.
           required: true
         - label: I will not upload model weights to this repository.
           required: true

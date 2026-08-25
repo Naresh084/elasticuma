@@ -1,4 +1,4 @@
-"""ElasticUMA Apple-Silicon inference and evidence tooling."""
+"""ElasticUMA Apple-Silicon inference and model tooling."""
 
 from __future__ import annotations
 

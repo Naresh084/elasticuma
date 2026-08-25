@@ -5,7 +5,7 @@ type: software
 authors:
   - given-names: "Naresh"
     family-names: "Prajapati"
-version: 0.2.0
+version: 0.3.0
 date-released: 2026-08-25
 license: Apache-2.0
 repository-code: "https://github.com/Naresh084/elasticuma"

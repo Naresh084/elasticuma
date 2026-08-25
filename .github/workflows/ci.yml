@@ -21,9 +21,9 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run pytest
       - run: uv run elasticuma --version
-      - run: uv run elasticuma model catalog
+      - run: uv run euma --help
+      - run: uv run euma models
       - run: uv build
-      - run: make native
 
   linux-contract:
     runs-on: ubuntu-24.04
@@ -37,5 +37,5 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pytest -k "not macos"
-      - run: uv run elasticuma model catalog
+      - run: uv run euma models
       - run: git diff --check

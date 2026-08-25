@@ -10,6 +10,5 @@ copyrights remain in the reconstructed source tree.
 FreeToken informed the edge-MoE problem framing and public onboarding, but no
 FreeToken source code is included or required.
 
-Research baselines, papers, Python/Swift dependencies, and model checkpoints
-retain their own copyrights and licenses. No model weights are distributed.
-See docs/PRIOR_ART.md and docs/THIRD_PARTY.md.
+Research papers, Python/Swift dependencies, and model checkpoints retain their
+own copyrights and licenses. No model weights are distributed.

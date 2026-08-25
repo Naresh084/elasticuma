@@ -1,8 +1,8 @@
 [experiment]
-name = "gate1-m1max-qwen36-q4-v3"
+name = "gate1-m1max-qwen36-q4-v4"
 model_repo = "mlx-community/Qwen3.6-35B-A3B-4bit"
 model_revision = "38740b847e4cb78f352aba30aa41c76e08e6eb46"
-prompt_file = "configs/prompts/gate1-code.txt"
+prompt_file = "tests/fixtures/research/prompts/gate1-code.txt"
 context_tokens = 4096
 max_tokens = 256
 seed = 104729
@@ -14,6 +14,7 @@ recovery_stable_samples = 3
 recovery_timeout_seconds = 60
 min_free_percent = 25.0
 max_swap_delta_mib = 384
+warmup_max_swap_delta_mib = 768
 timeout_seconds = 1200
 adapter = "command-json-v1"
 worker_process_name = "slipstream"
@@ -27,10 +28,10 @@ require_expert_telemetry = true
 fail_fast = true
 allow_live_pressure = false
 
-# Version 3 preserves v2's safety revision and scientific gate. V2 showed
-# that Qwen prefill requires at least 16 slots even though the generic runtime
-# CLI accepts 8. It replaces only that invalid 8-slot arm with 24 slots. V1/v2
-# raw receipts remain immutable.
+# Version 4 preserves v3's arms and every measured-row threshold. V3 showed
+# that 96-slot prefill performs one-time OS displacement during warmup. Warmups
+# may grow swap by at most 768 MiB while measured rows retain the 384 MiB limit;
+# the 25% free and native-critical stops are unchanged. Earlier raw data remains immutable.
 [[arms]]
 name = "cache-slots-16"
 cache_mib = 1136

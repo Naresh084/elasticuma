@@ -43,6 +43,7 @@ def test_builtin_catalog_has_two_admitted_architectures() -> None:
     assert [profile.id for profile in profiles] == ["qwen36", "gemma4"]
     assert all(profile.verification == "admitted" for profile in profiles)
     assert resolve_profile("qwen3.6").id == "qwen36"
+    assert resolve_profile("mlx-community/Qwen3.6-35B-A3B-4bit").id == "qwen36"
 
 
 def test_custom_catalog_extends_without_code_changes(tmp_path: Path) -> None:

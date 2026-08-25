@@ -1,58 +1,46 @@
-# Contributing to ElasticUMA
+# Contributing
 
-Thanks for helping improve local MoE inference on Apple Silicon. Correctness,
-claim discipline, and reproducibility matter more than the size of a reported
-speedup.
+Thanks for helping make local MoE inference on Apple Silicon easier and safer.
 
 ## Before opening an issue
 
-- Search existing issues and [the live claim ledger](docs/CLAIMS.md).
-- Run `uv run elasticuma doctor` and include only its privacy-safe fields.
-- State the Mac chip, RAM, macOS, Swift, ElasticUMA commit, exact checkpoint and
-  revision, exact command, complete error/log, and whether another model process
-  was running.
-- Never post serial numbers, hardware UUIDs, credentials, private prompts, model
-  weights, or unrelated process command lines.
+- Search existing issues.
+- Run `uv run euma doctor`.
+- Include the Mac chip, RAM, macOS, Swift version, ElasticUMA commit, exact model
+  id, and the smallest command that reproduces the problem.
+- Remove serial numbers, UUIDs, credentials, private prompts, and unrelated
+  process details. Never upload model weights.
 
 ## Pull requests
 
-1. Keep one mechanism or model boundary per PR.
-2. Explain the hypothesis and what evidence would falsify it.
-3. Add or update fast tests before collecting expensive model evidence.
-4. Run `make check` and include the result.
-5. Preserve fixed-mode behavior unless the PR explicitly changes that baseline.
-6. Do not silently retry, delete, or edit raw experiment rows.
+1. Keep one user-visible change, bug fix, or model boundary per PR.
+2. Add a focused test.
+3. Run `make check`.
+4. Update the short public documentation when behavior changes.
+5. Report failures and regressions instead of selecting only successful runs.
 
-### Performance changes
+## Model support
 
-Include same-model A/B end-to-end measurements on the base and proposed commits:
+Read [the architecture matrix](docs/models.md) first.
 
-- hardware, RAM, OS, Swift, power mode, and thermal deviations;
-- checkpoint repo, immutable revision, quantization, and model license;
-- exact commands, prompt hash, context, generation length, and balanced order;
-- all measured repetitions, not only the best run;
-- decode throughput, TTFT when relevant, physical footprint, compression/swap,
-  output parity, and guard failures; and
-- negative or regressing workloads.
+- A profile change is appropriate only when the native family already matches.
+- A new family needs tokenizer, checkpoint mapping, routing/attention semantics,
+  Metal kernels, and numerical tests.
+- Do not present a similar model name as compatibility evidence.
 
-A result remains `raw` until the configured admission checks pass. Do not put
-raw or projected numbers in the README headline or paper abstract.
+Open a model request with an official checkpoint URL, exact revision, config,
+quantization, target Mac, and why the model is practical on that machine.
 
-### Model support
+## Performance changes
 
-A JSON catalog profile is enough only for a checkpoint already supported by the
-native architecture path. New architectures require the complete checklist in
-[docs/models.md](docs/models.md), numerical fixtures, deterministic parity, and
-a held-out protocol. Keep `verification: community` until evidence is admitted.
+Use the same model bytes, prompt, output length, and runtime settings for the
+base and proposed versions. Report all repetitions plus throughput, physical
+footprint, compression/swap behavior, and output parity. Label unreviewed
+numbers as preliminary.
 
-### AI-assisted contributions
+## AI assistance
 
-AI assistance is welcome, but a human contributor must understand, test, and be
-able to explain every change. Do not submit invented APIs, fabricated benchmark
-receipts, or citations you have not checked. The human contributor is
-responsible for license compliance and any required disclosure.
+AI-assisted contributions are welcome, but a human contributor must understand,
+test, and take responsibility for every change and citation.
 
-## License
-
-Contributions are accepted under the repository's Apache License 2.0. Changes to
-the bundled upstream patch must preserve all applicable upstream notices.
+Contributions are accepted under Apache-2.0 and must preserve upstream notices.

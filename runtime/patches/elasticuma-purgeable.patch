@@ -990,8 +990,8 @@ index 0000000..231fd41
 +Later final protocols compare the committed patch with untouched upstream
 +fixed-16 and fixed-96 binaries. Qwen V6/V7 and Gemma V8 admit 45/45 positive
 +rows with within-protocol output parity. The final paper reports paired median
-+gains and fixed-96 footprint reductions; [the result ledger](../../docs/RESULTS.md)
-+carries exact values, intervals, and artifact hashes.
++gains, fixed-96 footprint reductions, exact intervals, and claim limits; see
++[the ElasticUMA paper](https://github.com/Naresh084/elasticuma/blob/main/paper/ElasticUMA-paper.pdf).
 +
 +## Claim limits and open validation
 +

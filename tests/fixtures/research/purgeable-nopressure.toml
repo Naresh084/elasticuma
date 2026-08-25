@@ -1,8 +1,8 @@
 [experiment]
-name = "purgeable-upstream-heldout-v6-reproduction"
+name = "purgeable-upstream-nopressure-v7-reproduction"
 model_repo = "mlx-community/Qwen3.6-35B-A3B-4bit"
 model_revision = "38740b847e4cb78f352aba30aa41c76e08e6eb46"
-prompt_file = "configs/prompts/purgeable-pressure-heldout.txt"
+prompt_file = "tests/fixtures/research/prompts/purgeable-nopressure-heldout.txt"
 context_tokens = 4096
 max_tokens = 256
 seed = 104729
@@ -26,12 +26,11 @@ require_output_parity = true
 require_token_id_parity = false
 require_expert_telemetry = true
 fail_fast = true
-allow_live_pressure = true
+allow_live_pressure = false
 
 [[arms]]
-name = "upstream-fixed-16-pressure-4g"
+name = "upstream-fixed-16-no-pressure"
 cache_mib = 1136
-pressure_mib = 4096
 environment = { ELASTICUMA_SLIPSTREAM_BIN = ".runtime/slipstream/.build/release/slipstream" }
 command = [
   "python3", "scripts/run_pinned_runtime.py",
@@ -42,9 +41,8 @@ command = [
 ]
 
 [[arms]]
-name = "upstream-fixed-96-pressure-4g"
+name = "upstream-fixed-96-no-pressure"
 cache_mib = 6816
-pressure_mib = 4096
 environment = { ELASTICUMA_SLIPSTREAM_BIN = ".runtime/slipstream/.build/release/slipstream" }
 command = [
   "python3", "scripts/run_pinned_runtime.py",
@@ -55,9 +53,8 @@ command = [
 ]
 
 [[arms]]
-name = "elasticuma-layerwise-96-hot16-pressure-4g"
+name = "elasticuma-layerwise-96-hot16-no-pressure"
 cache_mib = 6816
-pressure_mib = 4096
 environment = { ELASTICUMA_SLIPSTREAM_BIN = ".runtime/elasticuma/.build/release/slipstream" }
 command = [
   "python3", "scripts/run_pinned_runtime.py",

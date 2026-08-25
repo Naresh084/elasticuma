@@ -21,7 +21,7 @@ from .util import atomic_write_json, gib, sha256_file, utc_now
 
 SLIPSTREAM_REPO = "https://github.com/dwijenpatel/slipstream.git"
 SLIPSTREAM_REVISION = "01f7d5e774ca940982ea3aa012bd880b5c9d634e"
-ELASTICUMA_PATCH_SHA256 = "dc0418cb83988d1679796af1d707dbdb03db8473fcff9c45e6ec52daee8dc850"
+ELASTICUMA_PATCH_SHA256 = "9db7cbc8ce330068f292174e06834af43bf1607091a538d3dbad9f3eba4e1733"
 PackedModelSpec = ModelProfile
 QWEN36_SPEC = resolve_profile("qwen36")
 GEMMA4_SPEC = resolve_profile("gemma4")

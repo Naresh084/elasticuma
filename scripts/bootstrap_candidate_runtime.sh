@@ -6,7 +6,7 @@ RUNTIME_ROOT=${ELASTICUMA_RUNTIME_ROOT:-"$PROJECT_ROOT/.runtime/elasticuma"}
 RUNTIME_SOURCE=${ELASTICUMA_RUNTIME_SOURCE:-"https://github.com/dwijenpatel/slipstream.git"}
 UPSTREAM_REVISION="01f7d5e774ca940982ea3aa012bd880b5c9d634e"
 PATCH_PATH="$PROJECT_ROOT/runtime/patches/elasticuma-purgeable.patch"
-PATCH_SHA256="dc0418cb83988d1679796af1d707dbdb03db8473fcff9c45e6ec52daee8dc850"
+PATCH_SHA256="9db7cbc8ce330068f292174e06834af43bf1607091a538d3dbad9f3eba4e1733"
 
 if [ "$(uname -s)" != "Darwin" ] || [ "$(uname -m)" != "arm64" ]; then
   echo "ElasticUMA requires an Apple-Silicon Mac." >&2

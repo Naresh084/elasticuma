@@ -1,114 +1,71 @@
 # Quick start
 
-This guide assumes [installation](install.md) and the native runtime build are
-complete.
-
-## 1. Choose a model
+## 1. Install
 
 ```bash
-uv run elasticuma model catalog
+git clone https://github.com/Naresh084/elasticuma.git
+cd elasticuma
+./install.sh
 ```
 
-The built-in admitted profiles are `qwen36` and `gemma4`. `installed` means the
-exact packed model already exists in the canonical cache.
+The installer creates the Python environment and reconstructs the pinned
+Swift/Metal runtime. It does not download a model.
 
-## 2. Install once
+## 2. Pick and install a model
 
 ```bash
-uv run elasticuma model preflight --profile qwen36
-uv run elasticuma model install --profile qwen36
+uv run euma models
+uv run euma setup qwen36
 ```
 
-The second command is safe to rerun: it reuses a verified completed install or
-resumes the same partial streaming repack. It does not create a repository-local
-copy.
+`setup` checks the canonical cache, existing Hugging Face snapshots, model size,
+free disk, and the disk reserve before asking for confirmation. A completed
+install is reused; an interrupted pack resumes instead of starting another
+model copy.
 
-## 3. Generate once
-
-Preview the exact native command:
+## 3. Generate
 
 ```bash
-uv run elasticuma run \
-  --model qwen36 \
-  --prompt "Explain why more cache is not always faster." \
-  --dry-run
+uv run euma run qwen36 "Why can a large cache make a Mac slower?"
 ```
 
-Run it:
+Useful options:
 
 ```bash
-uv run elasticuma run \
-  --model qwen36 \
-  --prompt "Explain why more cache is not always faster." \
-  --max-new 256
+uv run euma run qwen36 "Write a Swift example." --max-new 512
+uv run euma run qwen36 "Hello" --dry-run
 ```
 
-By default, catalog profiles use 96 logical expert slots, keep 16 nonvolatile,
-and offer the cold remainder to macOS with exact reload on reuse.
-
-## 4. Launch the local API
+## 4. Start the local API
 
 ```bash
-uv run elasticuma serve --model qwen36
+uv run euma serve qwen36
 ```
 
-The server binds only to `127.0.0.1:8080`. It supports:
-
-- `GET /health`
-- `GET /v1/models`
-- `POST /v1/chat/completions`
-- `POST /v1/messages`
-
-Inspect the served model:
-
-```bash
-curl http://127.0.0.1:8080/v1/models
-```
-
-Send a streaming OpenAI-compatible request:
+In another terminal:
 
 ```bash
 curl http://127.0.0.1:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "qwen36",
-    "messages": [{"role": "user", "content": "What is unified memory?"}],
-    "max_tokens": 512,
+    "messages": [{"role": "user", "content": "What is an MoE model?"}],
+    "max_tokens": 256,
     "stream": true
   }'
 ```
 
-Stop the server with `Ctrl-C`. ElasticUMA refuses to launch if another known
-model server or app is already running; it never kills another process.
+The server is loopback-only and stops with `Ctrl-C`. ElasticUMA refuses to start
+while another recognized local model server is running; it never kills another
+process.
 
-A dependency-free Python client is also included:
+## Use a compatible packed model
 
-```bash
-python examples/openai_chat.py "What is unified memory?"
-```
-
-## 5. Tune explicitly when needed
+If the native runtime already supports its architecture and the directory has a
+valid `.gturbo` manifest and install receipt:
 
 ```bash
-uv run elasticuma serve \
-  --model qwen36 \
-  --cache-slots 64 \
-  --hot-slots 16 \
-  --max-context 8192
+uv run euma serve /absolute/path/to/model.gturbo
 ```
 
-Use `--residency fixed` only for comparison or debugging. Larger logical caches
-are not guaranteed to be faster, and larger contexts consume additional memory.
-
-## Serve a compatible packed model directly
-
-If the native runtime already supports its manifest, tokenizer, tensor layout,
-and kernels:
-
-```bash
-uv run elasticuma serve --model /absolute/path/to/model.gturbo
-```
-
-The directory must contain `manifest.json`, `verified-install.json`, and
-`model_weights.bin`. See [models.md](models.md) before presenting a new model as
-supported.
+Read [models.md](models.md) before treating a different checkpoint as supported.

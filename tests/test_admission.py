@@ -7,6 +7,7 @@ from elasticuma.admission import decide_run
 from elasticuma.config import load_experiment
 
 ROOT = Path(__file__).resolve().parents[1]
+GATE1_FIXTURE = ROOT / "tests/fixtures/research/gate1.toml"
 
 
 def _snapshot(*, free_percent: float = 40.0, swap_used_bytes: int = 0) -> dict[str, object]:
@@ -52,13 +53,13 @@ def _valid_record() -> dict[str, object]:
 
 
 def test_text_only_runtime_is_admitted_when_token_parity_is_capability_gated() -> None:
-    spec = load_experiment(ROOT / "configs/gate1.v4.example.toml", ROOT)
+    spec = load_experiment(GATE1_FIXTURE, ROOT)
     decision = decide_run(_valid_record(), spec)
     assert decision.admitted is True
 
 
 def test_token_hash_is_required_when_policy_enables_it() -> None:
-    spec = load_experiment(ROOT / "configs/gate1.v4.example.toml", ROOT)
+    spec = load_experiment(GATE1_FIXTURE, ROOT)
     strict = replace(spec, require_token_id_parity=True)
     decision = decide_run(_valid_record(), strict)
     assert decision.admitted is False

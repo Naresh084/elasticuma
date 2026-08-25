@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "elasticuma"
 dynamic = ["version"]
-description = "OS-managed routed-expert inference for Apple Silicon unified memory"
+description = "OS-reclaimable MoE expert caching for Apple Silicon"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -23,7 +23,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "matplotlib>=3.10,<4",
   "pytest>=8.4,<10",
   "ruff>=0.12,<1",
 ]

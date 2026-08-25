@@ -1,92 +1,115 @@
-# Supported models and extension contract
+# Models and architecture support
 
-ElasticUMA separates three claims that are often confused:
+ElasticUMA uses three simple support labels:
 
-1. **Catalogued** — a pinned JSON profile exists.
-2. **Runtime-compatible** — the native runtime can parse and execute the packed
-   model correctly.
-3. **Admitted** — a complete frozen experiment passed the evidence gate.
+- **Verified** — we ran the exact checkpoint through controlled correctness and
+  performance tests.
+- **Runtime-compatible** — the native runtime recognizes the architecture and a
+  completed `.gturbo` model passes its integrity checks, but this exact
+  checkpoint has not completed ElasticUMA's evaluation.
+- **Not implemented** — the tokenizer, tensor layout, routing, quantization, or
+  Metal kernels are missing. A catalog entry cannot fix that.
 
-A catalog entry alone does not make a new architecture supported.
+## Supported today
 
-## Built-in profiles
+| ID | Exact verified checkpoint | Native family | Shape | Status |
+|---|---|---|---|---|
+| `qwen36` | `mlx-community/Qwen3.6-35B-A3B-4bit` | `qwen36` / `qwen3_5_moe` | 40 layers, 256 experts, 8 routed | Verified on M1 Max / 32 GiB |
+| `gemma4` | `mlx-community/gemma-4-26b-a4b-it-4bit` | `gemma4` | 30 layers, 128 experts, 8 routed | Verified on M1 Max / 32 GiB |
 
-| Profile | Checkpoint | Architecture | Experts | Default logical/hot slots | Evidence |
-|---|---|---|---:|---:|---|
-| `qwen36` | `mlx-community/Qwen3.6-35B-A3B-4bit` | Qwen3.6 MoE | 256 total / 8 routed | 96 / 16 | V6 and V7 admitted on M1 Max |
-| `gemma4` | `mlx-community/gemma-4-26b-a4b-it-4bit` | Gemma 4 MoE | 128 total / 8 routed | 96 / 16 | V8 admitted on M1 Max |
-
-Both profiles pin an immutable 40-character Hugging Face revision and the
-source-index SHA-256 expected in the packed manifest.
-
-## Direct `.gturbo` compatibility
-
-`elasticuma run` and `elasticuma serve` accept a verified `.gturbo` directory
-without a Python profile. That is useful for a future or community model after
-native compatibility is implemented and tested.
-
-Required files:
-
-```text
-model.gturbo/
-  manifest.json
-  verified-install.json
-  model_weights.bin
-  ... immutable layer/tokenizer files ...
-```
-
-The native runtime remains authoritative for architecture, tokenizer, tensor,
-and kernel compatibility.
-
-## Add a checkpoint of a supported architecture
-
-Create `models/<name>.json` from
-[`models/example.community.json.example`](../models/example.community.json.example).
-The loader fails closed on unknown fields, mutable revisions, malformed hashes,
-unsafe identifiers, duplicate aliases, and impossible expert/cache dimensions.
-
-Then inspect it without downloading:
+List these from the installed CLI:
 
 ```bash
-uv run elasticuma model catalog
-uv run elasticuma model preflight --profile <name>
+uv run euma models
 ```
 
-A profile includes:
+Both a short id and the catalogued Hugging Face repository id resolve to the
+same profile:
 
-- stable id and aliases;
-- exact Hub repo and immutable revision;
-- source-index SHA-256;
-- packed manifest model id;
-- native repacker selector;
-- architecture, layer, expert, and routing metadata;
-- conservative default logical/hot slots; and
-- verification state (`community` or `admitted`).
+```bash
+uv run euma setup qwen36
+uv run euma setup mlx-community/Qwen3.6-35B-A3B-4bit
+```
 
-Community profiles must remain `community` until a new immutable experiment
-passes and the claim ledger is updated.
+## Native architecture boundary
 
-## Add a new architecture
+The pinned Swift/Metal runtime currently contains two model-family paths:
 
-A new JSON file is insufficient. At minimum, implement and test:
+| Native path | What it implements | What it does not imply |
+|---|---|---|
+| Qwen 3.6 MoE | Qwen tokenizer/chat path, `qwen3_5_moe` tensor mapping, 4-bit expert packing, Qwen routing and recurrent/attention blocks, Qwen Metal kernels | Arbitrary Qwen size, Qwen3.8 Max, dense Qwen, or another `qwen3_5_moe` checkpoint is not automatically verified |
+| Gemma 4 MoE | Gemma tokenizer/chat path, Gemma 4 A4B tensor mapping, 4-bit expert packing, Gemma routing/attention blocks, Gemma Metal kernels | Other Gemma sizes, dense Gemma, vision paths, or a different quantization are not automatically verified |
 
-1. source checkpoint discovery and license review;
-2. tokenizer/chat-template support;
-3. a versioned packed manifest and streaming repacker mapping;
-4. tensor layout, quantization decoding, routing, shared experts, and recurrent
-   or attention state;
-5. Metal kernels and numerical fixtures;
-6. exact cache identity and positional reload semantics;
-7. prefill-layer and decode-token GPU-safe residency boundaries;
-8. CLI/server model-id and request validation;
-9. deterministic output parity against fixed residency; and
-10. a balanced held-out performance/footprint protocol.
+A verified `.gturbo` directory can be passed directly when it uses one of those
+implemented families:
 
-Do not reuse Qwen or Gemma constants for a superficially similar model. Model
-support is a correctness boundary, not a marketing list.
+```bash
+uv run euma serve /absolute/path/to/model.gturbo
+```
 
-## Model licenses and storage
+## Recent and widely requested MoE models
 
-Model weights are never part of this repository or evidence archive. Each model
-retains its own license, acceptable-use terms, and access controls. ElasticUMA
-does not execute remote model code.
+Status checked on 25 August 2026. “Not implemented” means exactly that; it does
+not mean the model is impossible forever.
+
+| Model | Architecture / scale | ElasticUMA status | Main missing work |
+|---|---|---|---|
+| [Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) | `qwen3_5_moe`, 35B total / 3B active | **Verified** through the pinned Q4 profile | Text path works; native vision input is not exposed |
+| [Gemma 4 26B-A4B](https://huggingface.co/google/gemma-4-26B-A4B-it) | Gemma 4 MoE, 26B total / about 4B active | **Verified** through the pinned Q4 profile | Text path works; other sizes and formats need validation |
+| [Qwen3.5-35B-A3B](https://huggingface.co/Qwen/Qwen3.5-35B-A3B) | Qwen `qwen3_5_moe` family | **Not verified** | Exact config, tokenizer, packing, output parity, and kernels must pass; the similar family name is insufficient |
+| [Qwen3.8-2.4T-A95B](https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B) | `qwen3_5_moe_text`, 2.4T total / 95B active | **Not implemented** | New scale/config support; the active working set is itself far beyond a 32 GiB Mac |
+| [DeepSeek-V4-Flash-0731](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731) | DeepSeek V4 MoE with speculative module | **Not implemented** | DeepSeek tensor/MLA/routing path, quantization, tokenizer, speculative head, and Metal kernels |
+| [GLM-5.2](https://huggingface.co/zai-org/GLM-5.2) | `glm_moe_dsa`, 753B with sparse IndexShare attention | **Not implemented** | GLM tokenizer, DSA/MLA state, expert format, routing, and Metal kernels; full checkpoint is not a 32 GiB target |
+| [Kimi K3](https://huggingface.co/moonshotai/Kimi-K3) | `kimi_linear`, 2.8T / 104B active, 896 experts | **Not implemented** | KDA, Attention Residuals, LatentMoE, MXFP4/MXFP8, multimodal path, and kernels |
+| [Kimi K2.5](https://huggingface.co/moonshotai/Kimi-K2.5) | `kimi_k2`, 1T / 32B active, 384 experts | **Not implemented** | MLA, shared/routed experts, compressed-tensor format, tokenizer, vision path, and kernels |
+| [MiniMax-M2.5](https://huggingface.co/MiniMaxAI/MiniMax-M2.5) | `minimax_m2`, large agentic MoE | **Not implemented** | Custom model code, expert packing, routing, tokenizer, attention state, and Metal kernels |
+| [Mistral Small 4 119B-A6B](https://huggingface.co/mistralai/Mistral-Small-4-119B-2603) | `mistral4`, 128 experts / 4 active | **Not implemented** | Mistral tokenizer, MLA, shared expert, FP8/NVFP4 packing, multimodal path, and kernels |
+| [gpt-oss-120b](https://huggingface.co/openai/gpt-oss-120b) | `gpt_oss`, 117B / 5.1B active, MXFP4 | **Not implemented** | Harmony format, MXFP4 kernels, router/expert mapping, tokenizer, and numerical validation |
+| [Mixtral-8x7B](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1) | Classic sparse MoE, 8 experts / 2 active | **Not implemented** | Mistral tokenizer, Mixtral mapping, quantization, and Metal kernels |
+
+### Practical priority for Mac support
+
+The most useful next backend is not automatically the model with the largest
+headline parameter count. For a 32–64 GiB Mac, active parameters, common dense
+weights, checkpoint format, and required context state matter more.
+
+A sensible implementation order is:
+
+1. another checkpoint that exactly matches the existing Qwen path;
+2. `gpt-oss-120b` or Mistral Small 4, because their active working sets are much
+   smaller than Kimi K3 or Qwen3.8 Max;
+3. DeepSeek-V4-Flash after a reusable MLA/routing backend exists;
+4. GLM-5.2, Kimi K3, and Qwen3.8 Max only on machines whose storage and active
+   working set make them meaningful.
+
+This is a roadmap, not a support claim.
+
+## Why one generic MoE loader is unsafe
+
+Two models can both say “MoE” and still disagree on all of these:
+
+- how expert tensors are named, fused, sliced, and quantized;
+- whether shared experts exist and when they run;
+- router normalization, grouping, top-k selection, and scaling;
+- attention, recurrent, speculative, vision, and long-context state;
+- tokenizer, chat template, tool calls, and stop tokens; and
+- the Metal kernels required to reproduce the model's numerical semantics.
+
+FreeToken's own model documentation uses the same boundary: known-good
+checkpoints are listed because its prebuilt kernels are tuned for those
+architectures; other checkpoints are not accepted merely because they are MoE.
+
+## Adding support
+
+For a checkpoint that truly matches an implemented family, add a pinned catalog
+profile under `models/` and validate the exact output. A new family needs:
+
+1. tokenizer and chat semantics;
+2. checkpoint-to-`.gturbo` tensor mapping and quantization decoding;
+3. router, shared-expert, attention/recurrent, and context semantics;
+4. Metal kernels plus numerical fixtures; and
+5. fixed-versus-OS-managed output parity and a repeatable Mac benchmark.
+
+Open a model-support issue with the official model link, exact revision,
+architecture/config, desired quantization, and target Mac. Do not download a
+second copy merely to test whether a name looks compatible.

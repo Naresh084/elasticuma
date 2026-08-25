@@ -1,98 +1,91 @@
-# CLI reference
+# CLI
+
+`euma` and `elasticuma` are equivalent.
 
 ```text
-elasticuma <command> [options]
+euma <command> [options]
 ```
-
-`euma` is an equivalent short command. Every command supports `--help`.
 
 | Command | Purpose |
 |---|---|
-| `elasticuma doctor` | Privacy-safe host, toolchain, runtime, and model readiness |
-| `elasticuma runtime install` | Clone pinned upstream, verify/apply patch, build release runtime |
-| `elasticuma runtime status` | Inspect patch and native binary readiness |
-| `elasticuma model catalog` | List built-in/custom profiles and installation state |
-| `elasticuma model preflight` | Check runtime, duplicate snapshots, disk reserve, and store limits |
-| `elasticuma model install` | Resumably repack one pinned profile into the canonical store |
-| `elasticuma model list` | Show registered local model receipts |
-| `elasticuma run` | One-shot native generation |
-| `elasticuma serve` | Loopback OpenAI/Anthropic-compatible API |
-| `elasticuma experiment ...` | Reproduce evidence-gated research protocols |
+| `euma setup MODEL` | Build the runtime if needed, preflight, and safely install a supported model |
+| `euma models` | Show verified/community models and whether they are installed |
+| `euma run MODEL PROMPT` | Generate one response |
+| `euma serve MODEL` | Start the local OpenAI/Anthropic-compatible API |
+| `euma doctor` | Show privacy-safe Mac, toolchain, runtime, and cache readiness |
+| `euma runtime install` | Reconstruct and build the pinned native runtime |
+| `euma runtime status` | Check runtime provenance and binaries |
+| `euma model ...` | Advanced catalog and model-store commands |
 
-## Runtime
+Every command supports `--help`.
 
-```bash
-elasticuma runtime install
-elasticuma runtime status
-```
-
-Environment overrides for development:
-
-- `ELASTICUMA_RUNTIME_ROOT` — runtime checkout/build location
-- `ELASTICUMA_RUNTIME_SOURCE` — upstream Git URL or local clean source
-
-The public patch and upstream commit remain fixed regardless of the source URL.
-
-## Model catalog
+## Setup
 
 ```bash
-elasticuma model catalog [--catalog /path/to/catalog.json]
-elasticuma model preflight --profile qwen36 [--catalog FILE]
-elasticuma model install --profile qwen36 [--catalog FILE]
-elasticuma model list
+euma setup qwen36
+euma setup mlx-community/Qwen3.6-35B-A3B-4bit
+euma setup gemma4 --dry-run
+euma setup gemma4 --yes
 ```
 
-Project-local `models/*.json` files load automatically. `--catalog` adds an
-explicit file and may be repeated.
+`--dry-run` never installs. `--yes` is intended for reviewed non-interactive
+automation.
 
-Advanced raw Hugging Face snapshot commands are retained for research adapters:
+## Models
 
 ```bash
-elasticuma model hf-preflight --repo OWNER/NAME --revision COMMIT
-elasticuma model hf-fetch --repo OWNER/NAME --revision COMMIT
+euma models
+euma models --json
 ```
 
-They do not imply that the native runtime supports the downloaded architecture.
+The normal view is a short human-readable table. JSON includes stable ids and
+repository ids for scripts.
 
 ## One-shot generation
 
 ```bash
-elasticuma run --model <profile-or-gturbo-path> --prompt <text> [options]
+euma run MODEL "prompt" [options]
 ```
 
-| Flag | Default | Meaning |
+| Option | Default | Meaning |
 |---|---:|---|
-| `--max-new` | 256 | Generated-token limit |
+| `--max-new` | 256 | Maximum generated tokens |
 | `--max-context` | 4096 | Context limit |
-| `--cache-slots` | profile or 96 | Logical routed-expert slots/layer |
-| `--hot-slots` | profile or 16 | Nonvolatile slots/layer |
-| `--residency` | `os-managed` | `os-managed` or `fixed` |
-| `--seed` | off | Deterministic sampling seed |
-| `--catalog` | project catalog | Additional profile document |
-| `--dry-run` | off | Print exact binary hash and command without launching |
+| `--cache-slots` | model default | Logical expert slots per layer |
+| `--hot-slots` | model default | Slots kept non-reclaimable per layer |
+| `--residency` | `os-managed` | `os-managed` or fixed comparison mode |
+| `--seed` | unset | Deterministic sampling seed |
+| `--dry-run` | off | Print the exact binary, model, and command without launching |
+
+The former `--model` and `--prompt` flags remain accepted for compatibility.
 
 ## API server
 
 ```bash
-elasticuma serve --model <profile-or-gturbo-path> [options]
+euma serve MODEL [options]
 ```
 
-| Flag | Default | Meaning |
+| Option | Default | Meaning |
 |---|---:|---|
 | `--port` | 8080 | Loopback port |
-| `--model-id` | profile/manifest id | API model identifier |
-| `--max-context` | 16384 | 4096, 8192, 16384, 32768, or 65536 |
+| `--model-id` | profile/manifest id | Model id returned by the API |
+| `--max-context` | 16384 | Context limit |
 | `--queue-limit` | 4 | Maximum queued requests |
-| `--cache-slots` | profile or 96 | Logical expert slots/layer |
-| `--hot-slots` | profile or 16 | Nonvolatile slots/layer |
-| `--residency` | `os-managed` | `os-managed` or `fixed` |
-| `--catalog` | project catalog | Additional profile document |
-| `--dry-run` | off | Print launch plan without starting a process |
+| `--cache-slots` | model default | Logical expert slots per layer |
+| `--hot-slots` | model default | Slots kept non-reclaimable per layer |
+| `--residency` | `os-managed` | OS-managed or fixed residency |
+| `--dry-run` | off | Print the launch plan without starting the server |
 
-The native server always binds `127.0.0.1`; the wrapper exposes no host override.
+The server always binds to `127.0.0.1`.
 
-## Research commands
+## Advanced model-store commands
 
-The `experiment`, `pressure`, and legacy named model commands exist to reproduce
-the paper. They are intentionally more verbose and fail closed on incomplete
-telemetry. See [REPRODUCIBILITY.md](REPRODUCIBILITY.md).
+```bash
+euma model catalog
+euma model preflight qwen36
+euma model install qwen36
+euma model list
+```
+
+Use the top-level `setup` and `models` commands unless you need separate steps or
+machine-readable receipts.

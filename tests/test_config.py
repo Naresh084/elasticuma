@@ -5,10 +5,11 @@ from pathlib import Path
 from elasticuma.config import balanced_schedule, load_experiment
 
 ROOT = Path(__file__).resolve().parents[1]
+FIXTURES = ROOT / "tests/fixtures/research"
 
 
 def test_example_config_is_valid_and_balanced() -> None:
-    spec = load_experiment(ROOT / "configs/gate1.v4.example.toml", ROOT)
+    spec = load_experiment(FIXTURES / "gate1.toml", ROOT)
     schedule = balanced_schedule(spec)
     warmups = [row for row in schedule if row[2]]
     measured = [row for row in schedule if not row[2]]
@@ -45,7 +46,7 @@ def test_example_config_is_valid_and_balanced() -> None:
 
 
 def test_single_arm_dense_control_is_valid() -> None:
-    spec = load_experiment(ROOT / "configs/qwen38.dense-control.example.toml", ROOT)
+    spec = load_experiment(FIXTURES / "qwen38-dense.toml", ROOT)
     schedule = balanced_schedule(spec)
     assert len(spec.arms) == 1
     assert len(schedule) == 6
@@ -54,10 +55,10 @@ def test_single_arm_dense_control_is_valid() -> None:
 
 def test_purgeable_reproduction_configs_are_valid() -> None:
     for name, live_pressure in (
-        ("purgeable.pressure.example.toml", True),
-        ("purgeable.nopressure.example.toml", False),
+        ("purgeable-pressure.toml", True),
+        ("purgeable-nopressure.toml", False),
     ):
-        spec = load_experiment(ROOT / "configs" / name, ROOT)
+        spec = load_experiment(FIXTURES / name, ROOT)
         assert len(spec.arms) == 3
         assert spec.allow_live_pressure is live_pressure
         assert len(balanced_schedule(spec)) == 18
