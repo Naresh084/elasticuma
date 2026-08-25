@@ -1,0 +1,171 @@
+% !TEX program = xelatex
+\documentclass[10pt,letterpaper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[top=0.72in,bottom=0.78in,left=0.82in,right=0.82in]{geometry}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{amsmath,amssymb}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,calc}
+\usepackage{enumitem}
+\usepackage{xspace}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{placeins}
+\usepackage{float}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage{hyperref}
+\usepackage[capitalise,noabbrev]{cleveref}
+
+\definecolor{navy}{HTML}{17365D}
+\definecolor{linkblue}{HTML}{1D4ED8}
+\definecolor{softgray}{HTML}{F3F6F9}
+\definecolor{rulegray}{HTML}{CBD5E1}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=navy,
+  citecolor=linkblue,
+  urlcolor=linkblue,
+  pdftitle={ElasticUMA: Reload-Correct OS-Managed Expert Caching for Apple Silicon},
+  pdfauthor={Naresh Prajapati},
+  pdfsubject={Apple Silicon mixture-of-experts inference systems},
+  pdfkeywords={Apple Silicon, unified memory, mixture of experts, Metal, purgeable memory}
+}
+
+\titleformat{\section}{\Large\bfseries\color{navy}}{\thesection}{0.55em}{}
+\titleformat{\subsection}{\large\bfseries\color{navy}}{\thesubsection}{0.5em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries}{\thesubsubsection}{0.45em}{}
+\titlespacing*{\section}{0pt}{1.35em}{0.45em}
+\titlespacing*{\subsection}{0pt}{1.05em}{0.35em}
+\titlespacing*{\subsubsection}{0pt}{0.8em}{0.25em}
+
+\captionsetup{
+  font=small,
+  labelfont={bf,color=navy},
+  textfont=small,
+  justification=justified,
+  singlelinecheck=false,
+  skip=5pt
+}
+\setlist[itemize]{leftmargin=1.35em,itemsep=0.15em,topsep=0.3em}
+\setlist[enumerate]{leftmargin=1.55em,itemsep=0.15em,topsep=0.3em}
+\setlength{\parindent}{1.05em}
+\setlength{\parskip}{0pt}
+\setlength{\textfloatsep}{12pt plus 2pt minus 3pt}
+\setlength{\floatsep}{10pt plus 2pt minus 2pt}
+\setlength{\intextsep}{10pt plus 2pt minus 2pt}
+\renewcommand{\topfraction}{0.92}
+\renewcommand{\bottomfraction}{0.85}
+\renewcommand{\textfraction}{0.06}
+\renewcommand{\floatpagefraction}{0.82}
+\setcounter{topnumber}{3}
+\setcounter{bottomnumber}{2}
+\setcounter{totalnumber}{4}
+\emergencystretch=1em
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\sffamily ElasticUMA}
+\fancyhead[R]{\small\sffamily Author Preprint}
+\fancyfoot[C]{\small\thepage}
+\renewcommand{\headrulewidth}{0.35pt}
+\setlength{\headheight}{14pt}
+
+\newcommand{\system}{ElasticUMA\xspace}
+\newcommand{\gib}{\,GiB\xspace}
+\newcommand{\mib}{\,MiB\xspace}
+\newcommand{\tps}{\,token/s\xspace}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\artifacthash}[1]{\nolinkurl{#1}}
+\newcommand{\yes}{\textbf{yes}}
+\newcommand{\no}{\textbf{no}}
+
+\title{ElasticUMA: Reload-Correct OS-Managed Expert Caching for Apple Silicon}
+\author{Naresh Prajapati}
+\date{}
+
+\begin{document}
+\thispagestyle{empty}
+
+\begin{center}
+  {\fontsize{18}{22}\selectfont\bfseries\color{navy}
+  ElasticUMA: Reload-Correct OS-Managed\\[-1pt]
+  Expert Caching for Apple Silicon\par}
+  \vspace{0.65em}
+  {\large\bfseries Naresh Prajapati\par}
+  \vspace{0.18em}
+  {\normalsize Independent Researcher\par}
+  \vspace{0.12em}
+  {\small\href{mailto:naresh@proscendia.com}{naresh@proscendia.com}\par}
+  \vspace{0.4em}
+  {\small Code and artifact: \url{https://github.com/Naresh084/elasticuma}\par}
+\end{center}
+\vspace{0.25em}
+\noindent\color{rulegray}\rule{\linewidth}{0.7pt}\color{black}
+
+\input{sections/abstract}
+\input{sections/introduction}
+\input{sections/background}
+\input{sections/design}
+\input{sections/implementation}
+\input{sections/methodology}
+\input{sections/evaluation}
+\input{sections/discussion}
+\input{sections/related}
+\input{sections/limitations}
+\input{sections/conclusion}
+
+\section*{Artifact Availability}
+The source, exact upstream patch, experiment harness, admitted receipts, and
+analysis programs are available in the public repository linked on the first
+page. The tagged artifact archive includes internal SHA-256 checksums and the
+raw evidence used to derive every reported table and quantitative figure. Model
+weights, credentials, machine identifiers, and local paths are excluded. Model
+checkpoints must be obtained from their original publishers under their own
+licenses.
+
+\begin{center}
+\small
+\begin{tabularx}{0.96\linewidth}{>{\bfseries\raggedright\arraybackslash}p{3.25cm} >{\raggedright\arraybackslash}X}
+\toprule
+Artifact layer & Public location \\
+\midrule
+Runtime mechanism & \code{runtime/patches/} and \code{scripts/bootstrap\_candidate\_runtime.sh} \\
+Protocols and admission & \code{configs/}, \code{src/elasticuma/admission.py}, and \code{docs/METHODOLOGY.md} \\
+Measured evidence & \code{artifacts/releases/} with raw and admitted JSON receipts \\
+Analysis and figures & \code{scripts/}, \code{docs/RESULTS.md}, and \code{paper/figures/} \\
+Paper source & \code{paper/latex/}, including the bibliography and vector figures \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The reconstruction sequence and hardware-reporting fields are documented in
+\code{docs/REPRODUCIBILITY.md}. The repository deliberately keeps negative
+results and failed alternatives in the same evidence lineage as admitted
+results; reproductions that disagree with the reported measurements should be
+retained rather than tuned away.
+
+\section*{Acknowledgments and Disclosure}
+The author thanks the maintainers of slipstream, MLX, llama.cpp, and FreeToken
+for publishing code and documentation that made direct comparison possible.
+AI-assisted tools supported implementation, experiment orchestration, figure
+generation, and editorial revision. The named author selected the research
+questions, reviewed the source and prior art, verified the measurements and
+claims, and accepts responsibility for the manuscript and released artifacts.
+
+\renewcommand{\bibfont}{\small\raggedright}
+\setlength{\bibsep}{3pt plus 1pt minus 1pt}
+\bibliographystyle{unsrtnat}
+\bibliography{references}
+
+\end{document}

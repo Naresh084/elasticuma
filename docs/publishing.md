@@ -38,7 +38,6 @@ repository visibility before pushing.
 Attach these existing tracked files to release `v0.2.0`:
 
 - `paper/ElasticUMA-paper.pdf`
-- `paper/ElasticUMA-paper.docx`
 - `artifacts/releases/elasticuma-paper-v1.tar.gz`
 
 The evidence archive contains its own manifest and `SHA256SUMS`; it contains no

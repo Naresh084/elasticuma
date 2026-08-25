@@ -1,0 +1,67 @@
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Why fewer physically entitled pages can be faster}
+
+\system does not make SSD reads free and does not eliminate expert misses. Its
+Qwen hit rate remains near 87\%, below fixed-96 near 91\% and far above
+fixed-16 near 49\%. The improvement comes from a different system balance. The
+large logical cache still captures reuse when cold pages survive, while the OS
+can reclaim cold pages instead of compressing them or displacing more useful
+file-backed state. The fixed-96 baseline shows that maximizing hit rate can
+reduce service rate once its physical claim harms the shared pool.
+
+This interpretation is supported by three observations. First, physical
+footprint and compressor growth fall materially relative to fixed-96. Second,
+the candidate leads in no-pressure experiments as well as under the controlled
+co-tenant, so the result is not solely an artifact of one pressure process.
+Third, repeated empty recovery occurs in every candidate row without output
+divergence. The mechanism is therefore exercised in the measured path rather
+than acting as an unused safety annotation.
+
+\subsection{The OS as eviction partner, not model scheduler}
+
+A recent kernel-cache study finds that ordinary OS replacement can be a strong
+expert tier when the kernel sees the complete physical workload
+\cite{si2026kernelcache}. \system reaches a related design point without
+delegating model identity or exact publication to the kernel. The runtime
+decides which pages are eligible, retains hot experts, validates slot contents,
+and reloads exact weights. macOS decides whether eligible pages should remain
+physical given global demand. This division avoids a runtime-only estimate of
+desktop competition while preserving model-specific correctness.
+
+The design is not a complete adaptive memory controller. It uses a fixed
+logical/hot split and lets the OS react within the cold set. That simplicity is
+a strength of the current evidence: there is no learned predictor, online
+exploration, or second model configuration that can perturb the state being
+measured. Future work can adapt the hot-set size, but it must beat this
+non-destructive baseline and account for transition cost.
+
+\subsection{Relationship to discrete-GPU edge serving}
+
+FreeToken treats CPU memory, GPU memory, PCIe bandwidth, and CPU compute as
+heterogeneous resources and continuously maps work across them
+\cite{yang2026freetoken}. \system adopts its challenge-driven systems
+discipline but not its CUDA data plane. On Apple Silicon there is no expert copy
+across a host/device boundary. The relevant elasticity is whether cold shared
+pages remain physically valid. CPU execution, bandwidth-adaptive miss splitting,
+semantic checkpoints, and agent lifecycle management remain complementary.
+
+\subsection{Implications for model support}
+
+The mechanism transfers from Qwen's 256-expert, 40-layer layout to Gemma's
+128-expert, 30-layer layout without policy tuning. That supports an
+architecture-independent cache-validity abstraction, not arbitrary-model
+compatibility. A new model still needs a correct tokenizer, packed manifest,
+tensor mapping, router semantics, quantization decoder, and Metal kernels.
+\system's public catalog makes checkpoint metadata data-driven, while the
+native runtime remains the correctness boundary.
+
+\subsection{Practical deployment}
+
+The public CLI defaults to OS-managed 96/16 residency for admitted profiles and
+offers one-shot generation plus a loopback OpenAI/Anthropic-shaped server. It
+reuses one canonical model store, pins revisions, serializes downloads, and
+refuses a transfer that would violate its disk reserve. These product surfaces
+are engineering contributions for reproducibility and adoption; they are not
+part of the measured algorithmic claim.

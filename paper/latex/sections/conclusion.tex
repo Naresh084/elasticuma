@@ -1,0 +1,23 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+Our experiments demonstrate that a fixed expert cache equates logical capacity
+with permanent physical entitlement. That assumption is costly on Apple unified memory, where model
+slots, file-backed pages, GPU work, applications, compression, and swap share
+one pool. \system separates the two. It preserves a large logical cache, offers
+cold Metal-owned pages to macOS at GPU-safe boundaries, and converts every
+discarded provisional hit into an exact reload.
+
+On one M1 Max, the committed mechanism improves median decode throughput over
+both small and large fixed upstream policies for Qwen3.6 and Gemma 4 while
+reducing the large cache's peak physical footprint by roughly one third. The
+contribution is the demonstrated separation of cache identity from physical
+entitlement with exact recovery under real OS reclamation. The
+negative precursor, failed alternatives, and incomplete dense control remain
+part of the evidence record. The result is a systems mechanism scoped to the
+tested host and workloads. The practical implication is that an Apple runtime
+can retain cache identity without insisting that all cold pages remain physical.
+The next decisive steps are independent
+cross-generation reproduction, energy measurement, longer and concurrent
+workloads, and comparison with strong external Mac runtimes under matched model
+semantics.

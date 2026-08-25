@@ -1,0 +1,77 @@
+\section{Related Work}
+\label{sec:related}
+
+\subsection{Edge MoE serving and expert caching}
+
+Edge MoE systems exploit sparsity through different resource assignments.
+FreeToken co-designs residency, prefill streaming, CPU-GPU miss execution, and
+elastic VRAM management for heterogeneous CUDA machines
+\cite{yang2026freetoken}, whereas KTransformers moves selected MoE work to CPUs
+and optimizes the hybrid path \cite{chen2025ktransformers}. MoE-Infinity instead
+uses request-level activation traces to guide prefetching and caching on
+personal machines \cite{xue2024moeinfinity}. Taken together, these systems
+establish sparse local execution, but their main physical boundary is host
+versus device memory; they do not control the lifetime of explicit Metal slot
+pages inside one shared Apple pool.
+
+MawForge stores full MoE weights on disk and materializes routed experts into a
+bounded cache on unified-memory machines \cite{opie2026mawforge}, while
+slipstream supplies native Metal execution, packed storage, positional reads,
+and the fixed-cache baseline used here \cite{patel2026slipstream}. MawForge's
+cache-size result motivates an end-to-end memory view; slipstream isolates the
+residency mechanism under otherwise identical execution. Their shared
+limitation is that a stable expert slot has no validity protocol after the OS
+may discard its physical contents. \system does not claim their storage,
+Metal, or LFU mechanisms as new.
+
+\subsection{Representation and transfer reduction}
+
+SliceMoE expands effective cache capacity through bit-sliced reconstruction
+\cite{choi2026slicemoe}, whereas ZipMoE combines lossless expert compression
+with cache-affinity scheduling \cite{yang2026zipmoe}. ExactMoE focuses on exact
+low-bit slots and fused kernels \cite{saab2026exactmoe}. Despite changing
+different parts of the representation and transfer path, all three leave a
+separate residency question: a compressed, sliced, or fused cold slot still
+needs a validity rule if its physical pages may disappear.
+Overall, representation savings and residency validity are complementary rather
+than competing solutions.
+
+\subsection{Apple execution engines}
+
+BaseRT improves native Metal kernels and dispatch
+\cite{rathnayaka2026basert}, while FusionML identifies the eager boundary that
+enables CPU-GPU prefill co-execution and the bandwidth limit that prevents a
+similar decode benefit \cite{mohite2026fusionml}. NPUMoE maps static work to the
+Apple Neural Engine but keeps CPU/GPU fallbacks for dynamic operations
+\cite{benazir2026npumoe}. Collectively, these systems optimize where or how
+computation runs. \system changes neither placement nor kernel math; it defines
+a reload-correct, OS-discardable lifetime around the existing Metal path.
+
+\subsection{Memory-aware runtimes and kernel ownership}
+
+PagedAttention separates logical KV state from physical allocation to reduce
+fragmentation \cite{kwon2023pagedattention}, while MemSpec coordinates draft
+selection with resident memory on edge devices \cite{kim2026memspec}. By
+contrast, the kernel-managed expert-cache study delegates replacement to the
+page cache and finds that it can rival model-specific frequency policies under
+equal limits \cite{si2026kernelcache}. \system follows the shared separation
+principle but adds Metal-resource validity, GPU-safe transitions, and exact
+reload for weights that retain stable logical slots.
+Overall, these runtimes separate logical state from physical placement at
+different layers; routed Metal weights add a validity transition that they do
+not cover.
+
+\subsection{Novelty boundary}
+
+No individual component is claimed in isolation: expert caching, storage-backed
+weights, Metal inference, LFU ranking, OS page replacement, and purgeable
+graphics resources all predate this work. The contribution is their
+reload-correct composition at per-expert granularity and real inference phase
+boundaries, plus evidence that the composition improves the measured
+throughput-footprint frontier against untouched fixed policies.
+
+Across these categories, a specific gap remains among the cited systems: none
+evaluates per-expert Metal resources that macOS may reclaim while their logical
+cache identities survive, with relock-before-hit validation and exact recovery
+at real inference boundaries. \system addresses that gap without claiming the
+surrounding storage, caching, or Metal mechanisms as new.

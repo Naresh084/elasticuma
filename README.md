@@ -3,8 +3,7 @@
 **Run routed-expert language models on Apple Silicon with a large logical cache
 whose cold pages macOS can reclaim safely.**
 
-[Paper (PDF)](paper/ElasticUMA-paper.pdf) ·
-[Paper (Word)](paper/ElasticUMA-paper.docx) ·
+[Paper](paper/ElasticUMA-paper.pdf) ·
 [Quick start](docs/quickstart.md) ·
 [Supported models](docs/models.md) ·
 [CLI](docs/cli.md) ·

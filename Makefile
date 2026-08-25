@@ -33,4 +33,4 @@ analyze:
 	uv run elasticuma experiment analyze --input artifacts/admitted
 
 paper-clean:
-	rm -rf paper/build
+	rm -rf paper/latex/build

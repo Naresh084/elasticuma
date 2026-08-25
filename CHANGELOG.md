@@ -11,8 +11,8 @@ First public research release.
   data-driven model catalog.
 - Includes admitted Qwen3.6 and Gemma 4 profiles and direct verified `.gturbo`
   path serving.
-- Includes the PDF/Word paper, figures, claim ledger, negative results, and
-  redacted evidence archive.
+- Includes the publication-quality paper and LaTeX source, figures, claim
+  ledger, negative results, and redacted evidence archive.
 - Adds public install, quick-start, model-extension, CLI, contribution,
   security, issue-template, and publishing documentation.
 

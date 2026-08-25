@@ -1,0 +1,37 @@
+\section{Limitations, Validity, and Ethics}
+\label{sec:limitations}
+
+\textbf{Hardware breadth.} All positive evidence comes from one 24-GPU-core M1
+Max with 32\,GiB memory. Qwen and Gemma provide architectural diversity on the
+same host, not cross-generation evidence. M2 through later Apple generations
+may expose different memory, GPU, and purgeability behavior.
+
+\textbf{Workload breadth.} Experiments use batch size one, short held-out
+prompts, one 4,096-token context limit, and one controlled 4\,GiB co-tenant.
+Real desktop traces, longer contexts, concurrent requests, multimodal inputs,
+and tool-heavy sessions remain unevaluated. Qwen and Gemma use different prompts
+and generation lengths, so cross-model absolute token rates are not comparable.
+
+\textbf{Measurement.} macOS pressure events and compressor statistics are
+system-wide and coarse. Physical footprint is process-specific and is the
+primary memory metric, but it does not identify every causal path. Energy and
+GPU power are unmeasured. Five matched repetitions support descriptive
+bootstrap intervals, not population-level inference.
+
+\textbf{Exactness.} Within-protocol response text is identical under greedy
+decoding, and every candidate row exercises empty recovery. The pinned CLI does
+not expose token IDs or per-layer numerical traces. We therefore avoid claims
+of bitwise intermediate equality or model-quality improvement.
+
+\textbf{Baselines.} The controlled baselines are the untouched fixed policies
+of the same native runtime. This isolates the mechanism but does not establish
+superiority over every version of MLX, llama.cpp, BaseRT, or another Mac engine.
+Cross-runtime comparisons require matched model bytes, quantization, prompts,
+context, output semantics, and memory accounting.
+
+\textbf{Artifact and privacy.} The public artifact excludes model weights,
+credentials, serial numbers, UUIDs, personal paths, and unrelated process
+commands. Model checkpoints retain their own licenses and acceptable-use terms.
+The loopback API has no authentication or TLS and must not be exposed to a LAN
+or WAN. AI assistance is disclosed rather than treated as an anonymous author;
+the named author remains responsible for verification and submission policy.

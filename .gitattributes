@@ -3,7 +3,6 @@
 runtime/patches/*.patch -whitespace
 paper/figures/*.svg -whitespace
 
-*.docx binary
 *.pdf binary
 *.png binary
 *.tar.gz binary

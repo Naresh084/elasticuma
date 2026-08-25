@@ -1,0 +1,82 @@
+\section{Introduction}
+\label{sec:introduction}
+
+Open-weight mixture-of-experts (MoE) models decouple total model capacity from
+the computation performed for each token. A router selects a small subset of
+experts, so a model with tens or hundreds of billions of parameters may execute
+only a few billion active parameters at a time. That sparsity makes local
+serving possible, but it does not make the inactive weights disappear. A local
+runtime must still place the complete expert pool and move requested experts
+into execution memory. It must also decide which cached state should survive
+when the machine becomes busy.
+
+FreeToken addresses this problem on heterogeneous CUDA systems by combining a
+host-resident expert pool, a GPU expert cache, double-buffered prefill, and a
+bandwidth-calibrated choice between CPU execution and PCIe transfer
+\cite{yang2026freetoken}. KTransformers similarly demonstrates that CPU-GPU
+hybrid execution can make large MoE checkpoints practical on commodity
+machines \cite{chen2025ktransformers}. These systems exploit a resource model
+with distinct host and device memories. Apple Silicon changes that model. The
+CPU and GPU share physical memory, and Metal shared buffers do not cross a PCIe
+boundary. Expert slots, immutable file-backed weights, prompt state, the
+filesystem cache, the display stack, desktop applications, compression, and
+swap all compete in the same pool.
+
+This shared pool creates a failure mode that is invisible to cache-local
+metrics. We first characterize whether cache hit rate tracks end-to-end service
+performance. Increasing explicit expert capacity can raise the hit rate yet
+evict useful file-backed pages, increase compression, and reduce decode speed.
+Our preregistered fixed-cache sweep demonstrates that tension. Increasing Qwen
+from 16 to 96 expert slots per layer raises median hit rate from 48.98\% to
+90.13\%, while median decode throughput falls from 11.330 to 10.120\tps. Peak
+compressor growth also increases by roughly 5\gib. The paired slowdown is
+10.54\%, below the frozen 15\% threshold required to authorize our original
+cache-size controller. We retain that negative result and abandon the
+controller rather than lower its gate.
+
+The fixed-cache curve suggests a different mechanism. The runtime benefits from
+the logical identity and reuse information of a large cache, but it need not
+claim permanent physical residency for every cold slot. Apple exposes
+purgeable Metal resources for exactly this cache-like relationship: an
+application may mark a resource volatile, the operating system may reclaim its
+contents, and the application must relock and recreate or reload the resource
+before access \cite{apple2026purgeable,apple2026metalfootprint}. Applying that
+contract to model weights is not automatic. A cache mapping can outlive the
+physical contents it names; a GPU command may still reference a resource when a
+state transition is attempted; and externally allocated memory wrapped by
+Metal may remain physically owned even when the wrapper is marked purgeable.
+
+We present \system to resolve those correctness and integration problems. Each
+expert slot is allocated through Metal and retains a stable CPU pointer for
+positional reads. The cache tracks each slot as nonvolatile, volatile, or
+empty. At safe boundaries it
+keeps the hottest slots nonvolatile and offers the cold remainder to macOS. A
+future logical hit is provisional until a nonvolatile relock confirms that its
+contents survived. An empty return clears identity and recency state and enters
+the existing exact miss path. The GPU sees either validated cached bytes or a
+fully reloaded expert; discarded contents cannot reach a command encoder.
+
+This paper makes four contributions:
+
+\begin{itemize}
+  \item It characterizes the mismatch between expert-cache hit rate and
+  end-to-end service performance in one Apple unified-memory system, including
+  a preregistered negative result that stops an earlier controller claim.
+  \item It presents a reload-correct state machine for Metal-owned expert slots,
+  with explicit validity, publication, and GPU-synchronization invariants.
+  \item It integrates selective purgeability at the actual prefill-layer and
+  decode-token boundaries, avoiding the full physical prefill peak that defeats
+  a post-prefill-only policy.
+  \item It evaluates the committed implementation against untouched small- and
+  large-cache upstream binaries on Qwen3.6 and Gemma 4, with balanced held-out
+  repetitions, physical-footprint telemetry, exact-recovery receipts, negative
+  alternatives, immutable artifacts, and explicit claim limits.
+\end{itemize}
+
+The strongest supported conclusion is intentionally scoped. On the measured M1
+Max workloads, \system improves the throughput-footprint frontier: it dominates
+fixed-96 with higher throughput and lower footprint, while providing more
+throughput and locality than fixed-16 at a higher footprint. One host and two
+architectures do not establish an all-Mac result. Cross-chip reproduction,
+energy measurement, longer contexts, concurrency, and independent operation
+remain required.

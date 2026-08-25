@@ -1,0 +1,104 @@
+\section{Experimental Methodology}
+\label{sec:methodology}
+
+\subsection{Research questions}
+
+The evaluation asks five questions:
+
+\begin{itemize}
+  \item \textbf{RQ1:} Does \system outperform the large fixed cache while
+  reducing its physical-memory damage?
+  \item \textbf{RQ2:} Does it remain competitive with the strongest small-cache
+  fallback rather than buying memory relief with an unacceptable slowdown?
+  \item \textbf{RQ3:} Does the effect persist without a synthetic co-tenant?
+  \item \textbf{RQ4:} Does real OS reclamation preserve output under repeated
+  empty-slot recovery?
+  \item \textbf{RQ5:} Does the mechanism transfer to a second MoE architecture
+  without model-specific policy tuning?
+\end{itemize}
+
+\FloatBarrier
+
+\subsection{Platform and immutable inputs}
+
+\begin{table}[ht]
+\centering
+\caption{Primary experimental platform and pinned artifacts.}
+\label{tab:setup}
+\begin{tabularx}{0.98\linewidth}{>{\bfseries\raggedright\arraybackslash}p{2.45cm} >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}p{4.0cm}}
+\toprule
+Item & Pinned value & Role \\
+\midrule
+Host & Apple M1 Max, 24-core GPU, 32\,GiB, \mbox{macOS} 26.5.2 & Primary host \\
+Qwen & Qwen3.6-35B-A3B Q4 at \artifacthash{38740b84...} \cite{qwen2026qwen36} & 256 experts, 40 layers \\
+Gemma & Gemma 4 26B-A4B Q4 at \artifacthash{0d77464e...} \cite{google2026gemma4} & 128 experts, 30 layers \\
+Upstream & slipstream at \artifacthash{01f7d5e7...} & Untouched fixed baseline \\
+\system & runtime code at \artifacthash{ec84269d...} & OS-managed candidate \\
+Schedule & One excluded warmup plus five measured rows per arm & Balanced order, AC power \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The Qwen packed artifact contains 40 MoE layers with 256 routed experts and
+eight routed selections per token. The Gemma artifact contains 30 MoE layers
+with 128 routed experts and eight routed selections. Both use the runtime's
+4-bit packed representation and immutable positional reads. Qwen protocols
+generate 256 tokens from model-appropriate held-out prompts; Gemma generates
+128 because its protocol was frozen separately. Absolute token rates are
+therefore compared only within a model.
+
+\subsection{Baselines and protocols}
+
+Every positive protocol has three arms:
+
+\begin{itemize}
+  \item \textbf{Upstream-16}: untouched upstream with 16 fixed slots per layer;
+  \item \textbf{Upstream-96}: untouched upstream with 96 fixed slots per layer;
+  \item \textbf{ElasticUMA-96/16}: 96 logical slots with 16 hot nonvolatile
+  slots and OS-managed cold slots.
+\end{itemize}
+
+V6 runs Qwen with a bounded 4,096\mib co-tenant. V7 repeats Qwen without a
+pressure worker. V8 repeats the no-pressure protocol with Gemma and a new
+prompt. Each protocol uses one excluded warmup and five measured triples in a
+balanced order. All arms within a protocol share checkpoint bytes, prompt,
+context, generation limit, greedy decoding, and runtime settings. Candidate and
+baseline release binaries are hashed in each measured row.
+
+Gate 1 is a separate six-arm Qwen sweep over 16, 24, 32, 48, 64, and 96 fixed
+slots. It contains 30 measured rows and tests the earlier 15\% controller gate.
+Its data are not reused to tune successor prompts or thresholds.
+
+\subsection{Safety and admission}
+
+A measured row starts only when the required power and low-power-mode state are
+valid, no conflicting model process exists, and free memory meets the start
+threshold. Sampling runs at 0.25 or 0.5 seconds depending on protocol. A row is
+stopped or rejected on timeout, critical pressure, insufficient free memory,
+excess swap growth, a malformed runtime result, missing expert telemetry, or an
+output-parity failure. Failed rows are retained and are not silently retried.
+
+The successor gate requires all 15 planned rows, within-protocol output
+equality, observed empty recovery, no worse swap or critical pressure, and a
+material physical-footprint or compressor benefit over upstream-96. Against
+either baseline, the paired median slowdown and the bootstrap upper bound on
+slowdown must both be no worse than 10\%. The 10\% rule is a frozen engineering
+gate for these experiments, not a universal product definition.
+
+\subsection{Metrics and paired analysis}
+
+For candidate throughput $t_{c,r}$ and baseline throughput $t_{b,r}$ in matched
+repetition $r$, the paired gain is
+
+\begin{equation}
+  g_r = \frac{t_{c,r}}{t_{b,r}} - 1.
+  \label{eq:gain}
+\end{equation}
+
+We report the median of five paired gains and a deterministic 95\% percentile
+bootstrap confidence interval from 10,000 resamples with seed 104729. Arm
+summaries report the median decode throughput, hit rate, per-run peak physical footprint,
+per-run peak compressor growth, and minimum free-memory reading. These
+intervals describe uncertainty among five fixed matched pairs. They are not
+population-level significance tests, and we do not aggregate absolute token
+rates across model-specific prompts.

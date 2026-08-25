@@ -1,0 +1,200 @@
+\section{Evaluation}
+\label{sec:evaluation}
+
+Across V6, V7, and V8, all 45 planned positive rows are admitted. No measured
+row times out, reaches critical pressure, or grows swap. Each protocol produces
+one response SHA-256 across all three policies, and every candidate row observes
+nonzero empty-slot recovery. Paired comparisons use the deterministic 95\%
+bootstrap confidence interval defined in \cref{sec:methodology}. We first report the negative precursor, then answer
+the five research questions.
+
+\subsection{Negative precursor: hit rate is not the objective}
+
+\Cref{fig:gate1} shows the fixed-cache sweep. Hit rate rises monotonically from
+48.98\% at 16 slots to 90.13\% at 96 slots. Decode throughput moves in the
+opposite direction, while minimum free memory falls from 51\% to 32\% and peak
+compressor growth rises from 714.8\mib to 5,830.0\mib. The matched 16-to-96
+slowdowns are 10.72\%, 10.84\%, 10.54\%, 9.45\%, and 8.94\%. Their paired
+median is 10.54\%, with a bootstrap interval of 8.94--10.84\%.
+
+The tradeoff is stable but below the preregistered 15\% controller gate. Gate 1
+is therefore rejected. This matters to the positive result: \system is not a
+post-hoc cache size selected from the sweep. It changes memory ownership and
+validity semantics, and its tests use new prompts and experiment identifiers.
+
+\subsection{RQ1--RQ3: Qwen throughput and physical pressure}
+
+\begin{table}[ht]
+\centering
+\caption{Qwen3.6 policy results. Values are medians of five admitted measured
+runs per arm. Footprint is peak \code{ri\_phys\_footprint}; compressor is the
+per-run peak delta above the pre-run snapshot.}
+\label{tab:qwen}
+\small
+\begin{tabular}{llrrrrr}
+\toprule
+Protocol & Policy & \multicolumn{1}{c}{tok/s} & \multicolumn{1}{c}{Hit} &
+\multicolumn{1}{c}{Footprint} & \multicolumn{1}{c}{Compressor} &
+\multicolumn{1}{c}{Min free} \\
+\midrule
+\multirow{3}{*}{4\,GiB co-tenant}
+ & Upstream-16 & 13.025 & 47.91\% & 1.374\,GiB & 0.675\,GiB & 57\% \\
+ & Upstream-96 & 12.116 & 90.81\% & 6.705\,GiB & 5.890\,GiB & 38\% \\
+ & \system-96/16 & \textbf{14.136} & 86.83\% & 4.584\,GiB & 0.840\,GiB & 44\% \\
+\midrule
+\multirow{3}{*}{No pressure worker}
+ & Upstream-16 & 14.520 & 49.82\% & 1.386\,GiB & 0.000\,GiB & 57\% \\
+ & Upstream-96 & 14.293 & 90.58\% & 6.721\,GiB & 5.991\,GiB & 38\% \\
+ & \system-96/16 & \textbf{16.807} & 87.50\% & 4.594\,GiB & 0.700\,GiB & 44\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Under the 4\,GiB co-tenant, \system gains 7.25\% paired-median throughput over
+upstream-16 and 13.67\% over upstream-96. The interval against upstream-16
+spans -5.02\% to +24.08\%; against upstream-96 it is +5.33\% to +33.91\%.
+The candidate wins nine of ten pressure-backed comparisons and its only loss is
+5.02\%, inside the frozen fallback gate. It retains 38.92 percentage points
+more hit rate than upstream-16.
+
+Against upstream-96, peak physical footprint falls from 6.705 to 4.584\,GiB,
+a 31.64\% reduction. Peak compressor growth falls from 5.890 to 0.840\,GiB, a
+5.05\,GiB benefit. \system is not the smallest-memory policy: upstream-16 has
+a 1.374\,GiB footprint. The candidate dominates upstream-96 in the measured
+throughput-footprint plane. Against upstream-16 it trades a larger footprint
+for higher median throughput and 38.92 percentage points more locality.
+
+Without a synthetic pressure worker, the same policy gains 16.91\% over
+upstream-16 (interval 4.56--38.79\%) and 17.59\% over upstream-96 (interval
+4.79--29.15\%). It wins all ten matched comparisons. Fixed-96 footprint falls
+31.65\%, and compressor growth falls by 5.29\,GiB. The effect therefore does
+not require the controlled co-tenant, although the absolute rates differ
+because the host begins from a different memory state.
+
+\begin{figure}[tb]
+  \centering
+  \includegraphics[width=0.98\linewidth]{figures/elasticuma-main-results.pdf}
+  \caption{Qwen3.6 policy comparison. With the co-tenant, median throughput is
+  14.136\tps for \system versus 13.025 and 12.116\tps for upstream-16 and
+  upstream-96. Without it, the values are 16.807, 14.520, and 14.293\tps.
+  Fixed-96 footprint falls by about one third under both protocols. Bars are arm
+  medians; points are all measured runs.}
+  \label{fig:qwen-main}
+\end{figure}
+
+\begin{figure}[tb]
+  \centering
+  \includegraphics[width=0.90\linewidth]{figures/elasticuma-paired-gains.pdf}
+  \caption{Matched Qwen decode gains against upstream-16 and upstream-96.
+  Paired medians are 7.25\% and 13.67\% with the co-tenant and 16.91\% and
+  17.59\% without it. Horizontal intervals are deterministic bootstrap 95\%
+  intervals from five matched repetitions; the shaded region marks slowdowns.}
+  \label{fig:paired}
+\end{figure}
+
+\subsection{RQ4: recovery is exercised, not inferred}
+
+Every Qwen candidate row records volatile transitions, relocks, and a nonzero
+empty-recovery count. Cumulative recovered bytes range from 9.090 to
+10.758\,GiB per pressure-backed run and from 7.907 to 10.331\,GiB per
+no-pressure run. These totals exceed instantaneous footprint because a cold
+slot can be reclaimed and reloaded repeatedly.
+
+All policies within V6 produce one identical response hash; V7 produces a
+second within-protocol hash. These matching hashes demonstrated response-text
+equality under greedy decoding despite real empty recovery. The current upstream CLI does not
+expose generated token IDs, so we do not claim token-ID equality. The evidence
+is stronger than a no-reclamation test but narrower than a full numerical trace
+comparison.
+
+\FloatBarrier
+\pagebreak[4]
+
+\subsection{RQ5: transfer to Gemma 4}
+
+\begin{table}[ht]
+\centering
+\caption{Gemma 4 second-architecture validation without a pressure worker.
+Values are medians of five admitted measured runs per arm.}
+\label{tab:gemma}
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+Policy & \multicolumn{1}{c}{tok/s} & \multicolumn{1}{c}{Hit} &
+\multicolumn{1}{c}{Footprint} & \multicolumn{1}{c}{Compressor} &
+\multicolumn{1}{c}{Min free} \\
+\midrule
+Upstream-16 & 16.394 & 65.52\% & 1.986\,GiB & 0.000\,GiB & 69\% \\
+Upstream-96 & 18.742 & 98.40\% & 8.538\,GiB & 5.114\,GiB & 50\% \\
+\system-96/16 & \textbf{23.820} & 95.79\% & 5.527\,GiB & 1.073\,GiB & 55\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\FloatBarrier
+
+Gemma changes layer count, expert count, tokenizer, routing, and per-slot size.
+To test architecture transfer without tuning, we preserve the Qwen 96/16
+residency policy. Against the pinned upstream-16 and upstream-96 policies
+\cite{patel2026slipstream}, \system wins every matched comparison. Paired-median
+gains versus upstream-16 and upstream-96 are 45.30\% (interval 23.45--51.44\%)
+and 26.01\% (interval 11.88--28.55\%), respectively. Relative to fixed-96, peak
+footprint falls 35.26\%, from 8.538 to 5.527\,GiB; compressor growth falls from
+5.114 to 1.073\,GiB. Hit rate remains 30.28 percentage points above the small
+cache. All candidate rows exercise exact empty recovery (2.421--2.868\,GiB of
+cumulative reload traffic), and no row grows swap.
+
+\FloatBarrier
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.98\linewidth]{figures/elasticuma-cross-model.pdf}
+  \caption{No-pressure results across two MoE architectures. Absolute token
+  rates are not a cross-model benchmark because prompts and generation lengths
+  differ. Within each model, \system has the highest median decode rate and a
+  materially lower footprint than upstream-96.}
+  \label{fig:cross-model}
+\end{figure}
+
+\FloatBarrier
+
+\subsection{Rejected alternatives and mechanism ablation}
+
+\Cref{tab:ablations} records the measured failure criterion for each rejected
+mechanism. This is a mechanism-screening record, not a quantitative aggregate
+across incompatible prototypes.
+
+\begin{table}[ht]
+\centering
+\caption{Alternatives rejected before the final per-slot, layerwise design.}
+\label{tab:ablations}
+\begin{tabularx}{0.98\linewidth}{>{\bfseries}l X}
+\toprule
+Alternative & Observed failure \\
+\midrule
+\code{F\_NOCACHE} & Advice changed file-cache treatment but did not release the anonymous slot allocation. \\
+Direct mmap & Reduced measured model RSS from 3.38 to 1.92\,GiB in a probe, but was approximately 24 times slower than the cached positional-read path. \\
+Raw/compressed MTLIO & Direct-storage variants missed frozen latency gates; lossless CPU decode reached only 0.46--2.85\,GiB/s. \\
+One arena per layer & Coarse purgeability collapsed Qwen effective hit rate to 1.3\% and roughly halved throughput. \\
+Post-prefill-only policy & Correctly marked cold slots but ran after the full cache had already materialized, failing the footprint gate. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\FloatBarrier
+
+Only Metal-owned per-expert buffers, selective hot/cold state, and transitions
+inside the synchronized layer loop satisfy both validity and footprint gates.
+
+\subsection{Dense Qwen3.8 diagnostic}
+
+We also run one canonical Qwen3.8-27B Q4 dense checkpoint with MLX
+\cite{apple2026mlx}. One warmup and one 128-token measured row complete at
+11.36\tps. The sampled peak physical footprint is 17.96\,GiB; MLX reports
+18.60\,GiB peak memory. Minimum free memory reaches 20\%, and swap grows by
+151\mib. A later row reaches
+19\% free memory and is terminated by the frozen guard. Because the planned
+five measured rows do not complete, this diagnostic is not admitted. We do not
+use it as a speed, quality, or dense-versus-MoE comparison.
+
+\FloatBarrier

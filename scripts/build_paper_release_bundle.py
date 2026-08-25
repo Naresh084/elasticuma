@@ -77,9 +77,11 @@ ANALYSES = (
     "gemma4-purgeable-nopressure-v8-purgeable-analysis.json",
 )
 
-PAPER_FIGURES = (
-    "ElasticUMA-paper.docx",
+PAPER_FILES = (
     "ElasticUMA-paper.pdf",
+)
+
+PAPER_FIGURES = (
     "gate1-v4.svg",
     "elasticuma-architecture.html",
     "elasticuma-architecture.png",
@@ -247,10 +249,16 @@ def main() -> int:
             copy_redacted(project_root / name, staging / "reproduction" / name, pairs)
 
         copy_redacted(project_root / "paper/paper.md", staging / "paper/paper.md", pairs)
+        for name in PAPER_FILES:
+            copy_binary_checked(
+                project_root / "paper" / name,
+                staging / "paper" / name,
+                pairs,
+            )
         for name in PAPER_FIGURES:
             source = project_root / "paper/figures" / name
             destination = staging / "paper/figures" / name
-            if source.suffix in {".docx", ".pdf", ".png"}:
+            if source.suffix in {".pdf", ".png"}:
                 copy_binary_checked(source, destination, pairs)
             else:
                 copy_redacted(source, destination, pairs)
@@ -315,7 +323,7 @@ given new experiment names rather than appended to canonical raw directories.
         (staging / "SHA256SUMS").write_text(sums, encoding="utf-8")
 
         for path in staging.rglob("*"):
-            if path.is_file() and path.suffix not in {".docx", ".pdf", ".png"}:
+            if path.is_file() and path.suffix not in {".pdf", ".png"}:
                 redact_text(path.read_text(encoding="utf-8"), pairs)
         os.replace(staging, output)
         write_deterministic_archive(output, archive)

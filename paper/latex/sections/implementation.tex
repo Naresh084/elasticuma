@@ -1,0 +1,68 @@
+\section{Implementation}
+\label{sec:implementation}
+
+The measured implementation is a 629-line change at runtime code commit
+\code{ec84269d} over pinned upstream \code{01f7d5e7}. It is distributed as an
+Apache-2.0 patch whose complete staged diff is verified before every public
+build. The executable data path is Swift and Metal; Python is confined to model
+installation, experiment orchestration, admission, and analysis.
+
+\subsection{Cache and runner changes}
+
+The patch replaces external slot storage with per-slot Metal-owned shared
+buffers and adds the three-state residency field. It records volatile
+transitions, relocks, retained relocks, empty recoveries, invalidated slots, and
+cumulative recovered bytes. Cache lookup calls the relock path while holding
+the cache lock. Recovery reuses the existing exact positional reader and does
+not alter router scores or tensor representation.
+
+The model layer exposes one call that applies the hot/cold policy to all routed
+expert caches. The prefill runner invokes it after each synchronized layer. The
+decode runner invokes it after each complete token. This placement prevents
+front ends from forgetting the transition and keeps model-specific cache
+details out of the CLI and server.
+
+\subsection{Public controls and compatibility}
+
+The CLI and loopback server expose three controls:
+
+\begin{verbatim}
+--expert-cache-slots 96
+--expert-cache-residency os-managed
+--expert-cache-hot-slots 16
+\end{verbatim}
+
+The public wrapper selects these admitted defaults for catalogued MoE models.
+It also accepts a completed verified \code{.gturbo} path when the native runtime
+already supports that architecture. A data-driven JSON catalog pins model
+repository, revision, source index hash, manifest identity, routing dimensions,
+and default cache policy. A new catalog entry does not create native
+architecture support; new tensor layouts, tokenizers, routers, or kernels still
+require implementation and model-specific tests.
+
+\subsection{Evidence plane}
+
+The experiment plane acquires a single-model-worker lock and records a
+privacy-safe hardware receipt. It checks AC power and low-power mode, samples
+system and process memory, captures native pressure events, and stores the
+exact command and binary hashes. Raw runs are immutable. Admission fails closed
+on timeouts, process overlap, missing token counts, invalid throughput, missing
+memory samples, guard violations, absent expert telemetry, or required output
+mismatch.
+
+Physical footprint is sampled with
+\code{proc\_pid\_rusage().ri\_phys\_footprint}. System snapshots include free
+percentage, compressor pages, swap use, and page size. Per-run peak compressor
+and swap values are deltas above the pre-run snapshot. Cumulative recovered
+bytes count repeated exact reload traffic; they do not measure physical
+footprint.
+
+\subsection{Testing and reconstruction}
+
+The upstream package command reports 593 tests: 588 pass, while five existing
+repacker CLI tests look for an executable named \code{TurboFieldfareRepack}
+although the package product is \code{slipstream-repack}. All new cache,
+inference, CLI, and server tests pass. The public bootstrap clones the exact
+upstream commit, applies the bundled patch to the Git index, verifies the full
+staged diff hash, rejects extra source changes, and builds the repacker, CLI,
+and API server in release mode.

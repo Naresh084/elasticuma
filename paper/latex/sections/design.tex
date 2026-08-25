@@ -1,0 +1,185 @@
+\section{ElasticUMA Design}
+\label{sec:design}
+
+\subsection{Design goals}
+
+\system is guided by four goals.
+
+\begin{enumerate}
+  \item \textbf{Exactness.} Reclamation may change latency and I/O, but never
+  routing, weights, generated semantics, or the bytes observed by a GPU kernel.
+  \item \textbf{Stable resources.} Existing Metal bindings and CPU-side
+  positional reads should not require per-miss resource allocation.
+  \item \textbf{Timely physical elasticity.} Cold pages must become
+  reclaimable before later prefill layers create the global physical peak.
+  \item \textbf{Baseline isolation.} Fixed residency must bypass the new state
+  machine, preserving an untouched behavioral comparison.
+\end{enumerate}
+
+\begin{figure}[H]
+  \centering
+  \resizebox{0.98\linewidth}{!}{%
+  \begin{tikzpicture}[
+    font=\sffamily\small,
+    box/.style={draw=navy,thick,rounded corners=2pt,align=center,fill=softgray,minimum height=1.25cm},
+    arrow/.style={-{Latex[length=2.4mm]},thick,draw=navy},
+    darrow/.style={-{Latex[length=2.4mm]},thick,dashed,draw=navy},
+    note/.style={font=\sffamily\scriptsize,align=center,fill=white,inner sep=1.5pt,text=navy}
+  ]
+    \node[box,text width=3.0cm] (store) at (2.0,1.7)
+      {\textbf{Immutable packed model}\\SSD layer files\\exact positional reads};
+    \node[box,text width=4.0cm] (planner) at (8.4,4.25)
+      {\textbf{Router and cache planner}\\top-$k$ experts, LFU, recency, identity};
+    \node[draw=navy,thick,rounded corners=3pt,fill=navy!5,
+      minimum width=6.9cm,minimum height=2.55cm] (pool) at (8.4,1.7) {};
+    \node[font=\sffamily\bfseries] at ($(pool.north)+(0,-0.38)$)
+      {Metal-owned slot pool: 96 logical slots/layer};
+    \node[box,fill=linkblue!10,text width=2.25cm,minimum height=1.05cm]
+      (hot) at (6.9,1.35) {\textbf{Hot set}\\16 nonvolatile};
+    \node[box,dashed,text width=2.25cm,minimum height=1.05cm]
+      (cold) at (9.9,1.35) {\textbf{Cold set}\\up to 80 volatile};
+    \node[box,text width=4.5cm] (relock) at (8.4,-1.10)
+      {\textbf{Relock every provisional hit}\\retained $\rightarrow$ validated hit \quad empty $\rightarrow$ exact miss};
+    \node[box,text width=3.2cm] (os) at (14.25,1.7)
+      {\textbf{macOS unified memory}\\GPU, apps, page cache, compressor\\may reclaim cold pages};
+
+    \draw[arrow] (planner.south) -- node[note,right]{route and rank} (pool.north);
+    \draw[arrow] (store.east) -- node[note,above]{miss bytes} (pool.west);
+    \draw[darrow] (cold.east) -- node[note,above]{volatile} (os.west);
+    \draw[darrow] (os.south) |- node[note,below,pos=0.72]{retained or empty} (relock.east);
+    \draw[arrow] (relock.west) -- ++(-0.9,0) -| node[note,below,pos=0.25]{empty: exact reload} (store.south);
+    \draw[arrow] (relock.north) -- node[note,right]{validated} (hot.south);
+    \node[note,fill=none,font=\sffamily\footnotesize\itshape] at (8.4,-2.05)
+      {Safe points change physical residency; the runtime retains identity and exactness.};
+  \end{tikzpicture}}
+  \caption{\system separates logical cache identity from physical residency.
+  The packed model is immutable. Hot Metal-owned slots remain nonvolatile;
+  cold slots become volatile after GPU-safe boundaries. Every provisional hit
+  is relocked. If macOS reports an empty prior state, the mapping is
+  invalidated and exact bytes are reloaded before GPU use.}
+  \label{fig:architecture}
+\end{figure}
+
+\FloatBarrier
+
+\subsection{Metal-owned per-expert slots}
+
+The upstream executor allocates anonymous CPU memory and wraps it in
+\code{bytesNoCopy} Metal buffers. An isolated probe showed that making such a
+wrapper purgeable does not surrender the external allocation: Metal does not
+own the pages. \system instead allocates each slot with
+\code{MTLDevice.makeBuffer(storageModeShared)} and uses the stable
+\code{buffer.contents()} pointer as the destination of the existing exact
+\code{pread} path. The Metal object and CPU pointer survive transitions among
+nonvolatile, volatile, empty, and refilled states.
+
+This choice is essential. Reallocating a resource on every empty recovery would
+change binding identity, increase synchronization work, and complicate cache
+publication. Stable Metal ownership lets physical contents disappear while the
+runtime retains the slot object, its index, and its synchronization discipline.
+
+\subsection{Residency and identity state}
+
+For each slot $s$, the cache stores a Metal buffer $b_s$, an optional expert
+identity $e_s$, LFU count $f_s$, recency timestamp $r_s$, and residency state
+$q_s$. The state $q_s$ is one of:
+
+\begin{center}
+\begin{tabularx}{0.96\linewidth}{>{\bfseries}l X X}
+\toprule
+State & Physical contract & Valid use \\
+\midrule
+Nonvolatile & macOS must preserve contents & May be bound after normal cache planning \\
+Volatile & macOS may discard contents & Must be relocked before a hit is accepted \\
+Empty & Prior contents are invalid & Identity is cleared; exact reload is mandatory \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Logical identity and physical validity may therefore diverge temporarily: a
+volatile slot can still name expert $e_s$ even though macOS is allowed to
+discard its bytes. The divergence is safe only because a volatile mapping is
+provisional and cannot directly reach a GPU encoder.
+
+\FloatBarrier
+
+\subsection{Relock-before-hit protocol}
+
+\Cref{tab:lookup} shows the lookup path. Planning runs under the same
+cache lock that protects identity, LFU/recency data, residency state, and
+recovery counters. A matching nonvolatile slot is an ordinary hit. A matching
+volatile slot is first requested as nonvolatile. Metal returns the prior state:
+retained contents preserve the hit, while an empty return invalidates the
+mapping and turns the access into a miss. Before overwriting any volatile or
+empty victim, the runtime also makes that buffer nonvolatile. Only a complete
+positional read publishes the new expert identity.
+
+\begin{table}[ht]
+\centering
+\caption{Reload-correct lookup for requested expert $e$. Every row executes
+under the cache lock except the final GPU use.}
+\label{tab:lookup}
+\small
+\begin{tabularx}{0.96\linewidth}{>{\bfseries}r X}
+\toprule
+1 & Find the slot $s$ whose published identity equals $e$, if one exists. \\
+2 & If $s$ is volatile, request nonvolatile state and inspect the prior state. \\
+3a & If contents were retained, record the relock and preserve the hit. \\
+3b & If the prior state is empty, clear identity and validity and convert the access to a miss. \\
+4 & On a validated hit, update LFU/recency and return the slot. \\
+5 & On a miss, select a victim and make its Metal buffer nonvolatile. \\
+6 & Read the complete expert blob positionally into the stable buffer pointer. \\
+7 & Publish the new identity only after the complete read; then return the exact slot. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\FloatBarrier
+
+\subsection{Selective hot and cold residency}
+
+At a safe point, occupied slots are ranked first by cumulative use count and
+then by recency. The configured hot subset remains nonvolatile. Every other
+occupied nonvolatile slot transitions to volatile. The evaluated policy uses 96
+logical slots and a 16-slot hot set per layer. This is not a claim that 16 is
+universally optimal; it is a frozen policy chosen to combine the identity
+capacity of the large cache with the physical commitment of a small working
+set.
+
+The OS remains free to keep volatile pages while memory is plentiful. Under
+contention it can reclaim them without asking the model runtime to predict the
+future. \system supplies model-specific admission, identity, and exact recovery;
+macOS supplies global knowledge about competing physical demand.
+
+\subsection{GPU-safe transition points}
+
+Purgeability cannot change while a live command buffer may read a slot. During
+chunked prefill, \system runs the residency policy after the just-completed
+layer's routed tiles and tail command buffer finish. This lets layer $i$ offer
+its cold pages before layer $i+1$ expands. During decode, the policy runs after
+the complete step and output head finish. Both positions reuse synchronization
+already required for router readback and command completion.
+
+A post-prefill callback is insufficient. In an earlier implementation, every
+layer reached its 96-slot physical peak before any slot became volatile. The
+logical policy was correct but the peak-footprint gate failed. Moving the same
+hot/cold transition into the layer loop changed when physical entitlement was
+released and passed the successor gate.
+
+\subsection{Correctness invariants}
+
+The mechanism maintains five invariants:
+
+\begin{enumerate}
+  \item A GPU encoder binds a cached expert only when the slot is known
+  nonvolatile.
+  \item An empty prior state is never counted or consumed as a hit.
+  \item A new expert identity is published only after a complete exact read.
+  \item Purgeability transitions occur only after the last GPU command that may
+  reference the affected resource has completed.
+  \item Fixed mode executes none of the purgeability path.
+\end{enumerate}
+
+Together, the first four reduce OS reclamation to an ordinary exact cache miss.
+The fifth preserves the baseline and provides a fail-safe mode on unsupported
+systems.

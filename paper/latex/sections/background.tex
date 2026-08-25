@@ -1,0 +1,86 @@
+\section{Background and Motivation}
+\label{sec:background}
+
+\subsection{Storage-backed routed-expert inference}
+
+An MoE layer contains a router, a shared or dense path, and a pool of routed
+experts. For each token the router selects a small top-$k$ set. A bounded-memory
+runtime can keep non-expert tensors resident while reading selected expert
+tensors from storage into a fixed number of execution slots. MoE-Infinity shows
+that request-level sparsity and expert reuse support prefetching and caching on
+personal machines \cite{xue2024moeinfinity}. MawForge demonstrates a related
+storage-backed design on constrained unified-memory systems and finds that
+maximum cache capacity is not itself an optimal policy \cite{opie2026mawforge}.
+
+The executor used in this study descends from slipstream
+\cite{patel2026slipstream}. It stores immutable layer files in a packed
+\code{.gturbo} directory, maintains a bounded per-layer routed-expert cache,
+loads misses with positional reads, and executes native Metal kernels. The
+upstream fixed policy owns every allocated slot until the model unloads. This
+provides a strong controlled baseline because the model, quantization, kernels,
+tokenizer, storage layout, and request path remain constant while cache
+residency changes.
+
+\subsection{Why Apple unified memory is not free capacity}
+
+Unified addressing removes explicit host-to-device copies, but it does not
+remove physical scarcity. The same DRAM services CPU and GPU demand, file-backed
+pages, anonymous allocations, and the compressor. A process's resident set size
+also becomes an unreliable measure of its current physical claim: a purgeable
+page may remain mapped and counted in RSS while the operating system is free to
+discard its contents. We therefore use \code{proc\_pid\_rusage().ri\_phys\_footprint}
+as the primary process metric and report RSS only as secondary context.
+
+Apple documents \code{MTLPurgeableState.volatile} as a cache state whose
+contents may be discarded, and \code{setPurgeableState} returns the prior state
+when an application relocks a resource \cite{apple2026purgeable}. This creates
+two distinct notions of capacity:
+
+\begin{itemize}
+  \item \textbf{Logical capacity} is the number of expert identities and stable
+  Metal resources represented by the cache.
+  \item \textbf{Physical entitlement} is the subset of pages the application
+  currently insists must remain valid.
+\end{itemize}
+
+A fixed cache equates the two. \system deliberately separates them.
+
+\subsection{Prefill and decode expose different residency shapes}
+
+Prompt prefill processes many tokens in parallel and often activates a broad
+union of experts. Decode processes one new token at a time and exhibits stronger
+short-range route reuse. FreeToken treats these phases differently through
+full-layer streaming in prefill and semantic-aware caching in decode
+\cite{yang2026freetoken}. The phase distinction is also necessary on Apple UMA,
+but for a different reason. If cold slots become volatile only after all
+prefill completes, every layer can materialize its large cache first. The host
+has already paid the peak physical cost before the policy runs. \system must
+offer cold pages to the OS immediately after each layer's routed GPU work
+finishes.
+
+\subsection{The rejected cache-size controller}
+
+Our initial hypothesis was that a live pressure signal could select among fixed
+cache sizes. We froze a 15\% throughput-gap gate before measuring Qwen. The
+fixed sweep found a stable 10.54\% paired slowdown from 16 to 96 slots, with
+five of five pairs in the same direction, but it did not reach the gate. This
+result has two implications. First, the pressure tradeoff is real but not large
+enough to justify a controller built around ordinary cache-size switching.
+Second, changing the threshold after observing the data would turn a
+falsification gate into post-hoc selection. We instead test a new mechanism
+with new prompts, new experiment identifiers, and separately frozen gates.
+
+\FloatBarrier
+
+\begin{figure}[tb]
+  \centering
+  \includegraphics[width=0.98\linewidth]{figures/gate1-v4.pdf}
+  \caption{Fixed-cache characterization on Qwen3.6-35B-A3B Q4. More slots
+  monotonically raise hit rate but reduce decode throughput and free-memory
+  headroom while increasing compressor growth. The observed 16-to-96 slowdown
+  misses the preregistered 15\% controller-authorization gate. Bars and points
+  summarize five admitted measured repetitions per arm.}
+  \label{fig:gate1}
+\end{figure}
+
+\FloatBarrier

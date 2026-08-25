@@ -10,15 +10,12 @@ from elasticuma.util import sha256_file
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_public_runtime_patch_and_papers_are_pinned() -> None:
+def test_public_runtime_patch_and_paper_are_pinned() -> None:
     assert sha256_file(ROOT / "runtime/patches/elasticuma-purgeable.patch") == (
         "dc0418cb83988d1679796af1d707dbdb03db8473fcff9c45e6ec52daee8dc850"
     )
-    assert sha256_file(ROOT / "paper/ElasticUMA-paper.docx") == (
-        "7b19fe388fe2a2e55cdbcd8750117805acb084542cd045959ad9e606e1d3a347"
-    )
     assert sha256_file(ROOT / "paper/ElasticUMA-paper.pdf") == (
-        "55d65068198374d9fc1258aab467a6c4b04cc0659c37bb275f0976ca6e52b847"
+        "c3929e00a39d99a83d567c05514a59516149c3e2a0ffd820bb972e19b4d66d5b"
     )
 
 

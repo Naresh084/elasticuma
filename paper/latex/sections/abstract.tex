@@ -1,0 +1,30 @@
+\begin{abstract}
+Storage-backed MoE inference on Apple Silicon has a shared-memory problem: one
+physical pool serves the CPU, GPU, filesystem cache, applications, compressor,
+and swap. For storage-backed
+mixture-of-experts (MoE) inference, a large explicit expert cache can therefore
+raise its local hit rate while increasing system pressure and reducing
+end-to-end throughput. This paper introduces \system, a reload-correct expert
+cache that separates logical capacity from physical entitlement. Each expert
+slot is a Metal-owned shared buffer. The runtime keeps a small hot set
+nonvolatile and marks cold slots volatile only at synchronized prefill-layer and
+decode-token boundaries. Before treating a volatile mapping as a hit, it
+relocks the buffer. If Metal reports that the contents are empty, \system
+invalidates the mapping and reloads the exact expert bytes before GPU binding.
+
+We evaluate the committed mechanism against untouched fixed-16 and fixed-96
+upstream policies on an M1 Max with 32\,GiB unified memory. Under a bounded
+4\,GiB co-tenant, Qwen3.6-35B-A3B Q4 gains 7.25\% and 13.67\% paired-median
+decode throughput over the two baselines, while reducing fixed-96 peak physical
+footprint by 31.64\%. Without synthetic pressure, the gains are 16.91\% and
+17.59\%, with a 31.65\% footprint reduction. A second architecture, Gemma 4
+26B-A4B Q4, gains 45.30\% and 26.01\% and reduces fixed-96 footprint by
+35.26\%. All 45 positive measured rows pass admission with within-protocol
+output equality and observed empty-slot recovery. The contribution is a
+two-architecture mechanism on one Mac that lets a large logical cache coexist
+with OS-wide reclamation; it does not establish cross-generation, energy,
+concurrency, or independent-reproduction claims.
+\end{abstract}
+
+\noindent\textbf{Keywords:} Apple Silicon, unified memory,
+mixture-of-experts inference, Metal, purgeable memory, expert caching.

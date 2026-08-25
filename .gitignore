@@ -22,6 +22,7 @@ artifacts/releases/**
 !artifacts/figures/.gitkeep
 !artifacts/releases/elasticuma-paper-v1.tar.gz
 paper/build/
+paper/latex/build/
 native/.build/
 
 # Secrets and local overrides.
